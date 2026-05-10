@@ -1,0 +1,17 @@
+loss:
+  name: jepa
+  supervised_base_loss: smooth_l1
+
+  jepa:
+    mask_ratio_low: 0.15
+    mask_ratio_high: 0.30
+    predictor_hidden: 128
+
+    ema_tau_start: 0.99
+    ema_tau_end: 0.999
+
+    lambda_max: 0.05
+    lambda_warmup_epochs: 1.0
+    lambda_ramp_epochs: 3.0
+
+    base_loss: cosine
