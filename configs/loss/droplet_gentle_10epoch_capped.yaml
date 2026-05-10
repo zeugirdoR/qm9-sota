@@ -1,0 +1,27 @@
+loss:
+  name: droplet
+  base_loss: smooth_l1
+
+  warmup_steps: auto_one_epoch
+  anneal_steps: auto_sixteen_epochs
+
+  delta_start: 0.05
+  delta_end: 0.30
+
+  nu_start: 0.05
+  nu_end: 0.40
+
+  alpha_start: 0.05
+  alpha_end: 0.40
+
+  temp_start: 1.0
+  temp_end: 6.0
+
+  lambda_start: 0.0
+  lambda_end: 0.20
+
+  soft_gate: true
+  min_weight: 0.20
+  normalize_by_weight: true
+
+  learnable_offsets: false

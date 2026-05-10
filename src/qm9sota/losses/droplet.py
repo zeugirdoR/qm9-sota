@@ -188,6 +188,8 @@ def _resolve_steps(value, steps_per_epoch: int):
         return max(100, steps_per_epoch * 3)
     if value == "auto_eight_epochs":
         return max(100, steps_per_epoch * 8)
+    if value == "auto_sixteen_epochs":
+        return max(100, steps_per_epoch * 16)
     if value == "auto_three_epochs_start":
         return steps_per_epoch * 3
     raise ValueError(f"Unknown step schedule value: {value}")
