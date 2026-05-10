@@ -13,3 +13,4 @@
 - Each run saves config snapshots, logs, and per-target MAE.
 - Failed schedules are archived, not forgotten.
 - No SOTA claim from a single seed or notebook-only code.
+| A0-vs-A1b-MS3 | 2026-05-10 | Paired 3-seed smoke test, A0 vs gentle Droplet | mean delta -0.000761 | A1b wins 3/3; promote to candidate regularizer |
