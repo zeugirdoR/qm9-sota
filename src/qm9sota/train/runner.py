@@ -88,7 +88,8 @@ def train_one_epoch(
                 ratio_high=jcfg.mask_ratio_high,
             )
             masked_batch = apply_atom_mask(batch, mask)
-            _, h_online = model(masked_batch, return_node_embeddings=True)
+            online_out = model(masked_batch, return_embeddings=True)
+            h_online = online_out["node_embeddings"]
             h_target = ema_target.encode_nodes(batch)
             j_loss, j_stats = jepa_loss_mod(
                 context_node_h=h_online,
