@@ -1,3 +1,10 @@
+from qm9sota.losses.jepa import (
+    build_jepa_loss,
+    EMATargetEncoder,
+    sample_atom_mask,
+    apply_atom_mask,
+)
+
 from __future__ import annotations
 
 from collections import defaultdict
@@ -16,7 +23,7 @@ from qm9sota.data.qm9 import TARGET_NAMES
 from qm9sota.train.evaluate import evaluate_both, normalize_y
 
 
-def make_optimizer(model, loss_fn, cfg: dict):
+def make_optimizer(model, loss_fn, cfg: dict, jepa_loss=None):
     opt_cfg = cfg["optimizer"]
     lr = float(opt_cfg.get("lr", 3e-4))
     weight_decay = float(opt_cfg.get("weight_decay", 1e-6))
@@ -26,18 +33,37 @@ def make_optimizer(model, loss_fn, cfg: dict):
         loss_params = list(loss_fn.parameters())
         if loss_params:
             params.append({"params": loss_params, "lr": lr * 0.1, "weight_decay": 0.0})
+    if jepa_loss is not None:
+        jepa_params = list(jepa_loss.parameters())
+        if jepa_params:
+            params.append({"params": jepa_params, "lr": lr, "weight_decay": weight_decay})
 
     return torch.optim.AdamW(params)
 
 
-def train_one_epoch(model, loader, optimizer, device, target_mean, target_std, global_step: int, droplet_loss=None, grad_clip: float = 5.0):
+def train_one_epoch(
+    model,
+    loader,
+    optimizer,
+    device,
+    target_mean,
+    target_std,
+    global_step: int,
+    droplet_loss=None,
+    grad_clip: float = 5.0,
+    jepa_ctx: dict | None = None,
+):
+    from qm9sota.losses.jepa import apply_atom_mask, sample_atom_mask
+
     model.train()
     total_loss = 0.0
     total_graphs = 0
     stat_sums = defaultdict(float)
     stat_count = 0
 
-    for batch in tqdm(loader, leave=False):
+    steps_per_epoch = len(loader)
+
+    for step_in_epoch, batch in enumerate(tqdm(loader, leave=False)):
         batch = batch.to(device)
         optimizer.zero_grad(set_to_none=True)
 
@@ -45,17 +71,55 @@ def train_one_epoch(model, loader, optimizer, device, target_mean, target_std, g
         y_norm = normalize_y(batch.y, target_mean, target_std)
 
         if droplet_loss is None:
-            loss = F.smooth_l1_loss(pred_norm, y_norm)
+            sup_loss = F.smooth_l1_loss(pred_norm, y_norm)
             stats = {}
         else:
-            loss, stats = droplet_loss(pred=pred_norm, target=y_norm, step=global_step)
+            sup_loss, stats = droplet_loss(pred=pred_norm, target=y_norm, step=global_step)
+        stats = dict(stats)
 
-        loss.backward()
+        tau = None
+        if jepa_ctx is not None:
+            jepa_loss_mod = jepa_ctx["loss"]
+            ema_target = jepa_ctx["ema"]
+            jcfg = jepa_loss_mod.cfg
+            total_epochs = jepa_ctx["total_epochs"]
+            epoch = jepa_ctx["epoch"]
+
+            epoch_float = (epoch - 1) + (step_in_epoch + 1) / max(steps_per_epoch, 1)
+            lam = jepa_loss_mod.lambda_at(epoch_float)
+            tau = jepa_loss_mod.tau_at(epoch_float, total_epochs)
+
+            mask = sample_atom_mask(
+                batch.batch,
+                ratio_low=jcfg.mask_ratio_low,
+                ratio_high=jcfg.mask_ratio_high,
+            )
+            masked_batch = apply_atom_mask(batch, mask)
+            _, h_online = model(masked_batch, return_node_embeddings=True)
+            h_target = ema_target.encode_nodes(batch)
+            j_loss, j_stats = jepa_loss_mod(
+                context_node_h=h_online,
+                target_node_h=h_target,
+                mask=mask,
+            )
+
+            total_step_loss = sup_loss + lam * j_loss
+            stats.update(j_stats)
+            stats["sup_loss"] = sup_loss.detach()
+            stats["jepa_lambda"] = torch.tensor(lam, device=device)
+            stats["jepa_tau"] = torch.tensor(tau, device=device)
+        else:
+            total_step_loss = sup_loss
+
+        total_step_loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
         optimizer.step()
 
+        if jepa_ctx is not None and tau is not None:
+            jepa_ctx["ema"].update(model, tau=tau)
+
         batch_size = batch.y.size(0)
-        total_loss += float(loss.detach()) * batch_size
+        total_loss += float(total_step_loss.detach()) * batch_size
         total_graphs += batch_size
         global_step += 1
 
@@ -87,15 +151,53 @@ def run_training(
     target_std = bundle.target_std.to(device)
     model = model.to(device)
 
-    loss_name = loss_cfg.get("loss", {}).get("name", "baseline")
+    loss_block = loss_cfg.get("loss", {})
+    loss_name = loss_block.get("name", "baseline")
+
     droplet_loss = None
+    jepa_loss_mod = None
+    ema_target = None
+
+    def _build_supervised(sup_block: dict):
+        nonlocal droplet_loss
+        sup_name = sup_block.get("name", "baseline")
+        if sup_name == "droplet":
+            from qm9sota.losses.droplet import build_droplet_loss
+            droplet_loss = build_droplet_loss(
+                {"loss": sup_block},
+                steps_per_epoch=len(bundle.train_loader),
+                device=device,
+            )
+        elif sup_name != "baseline":
+            raise ValueError(f"Unknown supervised loss name: {sup_name}")
+
     if loss_name == "droplet":
-        from qm9sota.losses.droplet import build_droplet_loss
-        droplet_loss = build_droplet_loss(loss_cfg, steps_per_epoch=len(bundle.train_loader), device=device)
-    elif loss_name != "baseline":
+        _build_supervised({**loss_block, "name": "droplet"})
+    elif loss_name == "baseline":
+        pass
+    elif loss_name == "jepa_aux":
+        sup_block = dict(loss_block.get("supervised", {"name": "baseline"}))
+        _build_supervised(sup_block)
+        from qm9sota.losses.jepa import EMATargetEncoder, build_jepa_loss
+        hidden_dim = int(cfg["model"].get("hidden_dim", 128))
+        jepa_loss_mod = build_jepa_loss(
+            dict(loss_block.get("jepa", {})),
+            hidden_dim=hidden_dim,
+            device=device,
+        )
+        ema_target = EMATargetEncoder(model).to(device)
+    elif loss_name == "jepa":
+    jepa_cfg = loss_cfg["loss"]["jepa"]
+    jepa_loss_fn = build_jepa_loss(
+        jepa_cfg=jepa_cfg,
+        hidden_dim=int(cfg["model"]["hidden_dim"]),
+        device=device,
+    )
+    ema_encoder = EMATargetEncoder(model).to(device)
+    else:
         raise ValueError(f"Unknown loss name: {loss_name}")
 
-    optimizer = make_optimizer(model, droplet_loss, cfg)
+    optimizer = make_optimizer(model, droplet_loss, cfg, jepa_loss=jepa_loss_mod)
     grad_clip = float(cfg["optimizer"].get("grad_clip", 5.0))
     epochs = int(cfg["train"].get("epochs", 5))
 
@@ -125,6 +227,15 @@ def run_training(
     best_state = None
 
     for epoch in range(1, epochs + 1):
+        jepa_ctx = None
+        if jepa_loss_mod is not None:
+            jepa_ctx = {
+                "loss": jepa_loss_mod,
+                "ema": ema_target,
+                "epoch": epoch,
+                "total_epochs": epochs,
+            }
+
         train_loss, global_step, stats = train_one_epoch(
             model=model,
             loader=bundle.train_loader,
@@ -135,6 +246,7 @@ def run_training(
             global_step=global_step,
             droplet_loss=droplet_loss,
             grad_clip=grad_clip,
+            jepa_ctx=jepa_ctx,
         )
 
         raw_mae, norm_mae = evaluate_both(model, bundle.val_loader, device, target_mean, target_std)

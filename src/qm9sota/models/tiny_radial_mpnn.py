@@ -49,18 +49,24 @@ class TinyRadialMPNN(nn.Module):
             nn.Linear(hidden_dim, out_dim),
         )
 
-    def forward(self, data):
+
+    def encode_nodes(self, data):
         x = data.x.float()
         pos = data.pos.float()
         edge_index = data.edge_index
-        batch = data.batch
 
         h = self.node_in(x)
+
         src, dst = edge_index
 
-        for msg_mlp, upd_mlp, norm in zip(self.msg_mlps, self.upd_mlps, self.norms):
+        for msg_mlp, upd_mlp, norm in zip(
+            self.msg_mlps,
+            self.upd_mlps,
+            self.norms,
+        ):
             rel = pos[src] - pos[dst]
             dist2 = rel.pow(2).sum(dim=-1, keepdim=True)
+
             edge_feat = torch.cat([h[src], h[dst], dist2], dim=-1)
             msg = msg_mlp(edge_feat)
 
@@ -70,8 +76,21 @@ class TinyRadialMPNN(nn.Module):
             dh = upd_mlp(torch.cat([h, agg], dim=-1))
             h = norm(h + dh)
 
-        graph_h = mean_pool(h, batch)
-        return self.head(graph_h)
+        return h
+
+    def forward(self, data, return_embeddings: bool = False):
+        h = self.encode_nodes(data)
+        graph_h = mean_pool(h, data.batch)
+        pred_norm = self.head(graph_h)
+
+        if return_embeddings:
+            return {
+                "pred": pred_norm,
+                "node_embeddings": h,
+                "graph_embedding": graph_h,
+            }
+
+        return pred_norm
 
 
 def build_model(cfg: dict) -> nn.Module:
