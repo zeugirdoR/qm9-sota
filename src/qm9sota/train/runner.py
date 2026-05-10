@@ -71,7 +71,18 @@ def train_one_epoch(model, loader, optimizer, device, target_mean, target_std, g
     return total_loss / max(total_graphs, 1), global_step, avg_stats
 
 
-def run_training(*, cfg: dict[str, Any], loss_cfg: dict[str, Any], run_name: str, model, bundle, device, output_root: Path, config_paths: dict[str, str]):
+def run_training(
+    *,
+    cfg: dict[str, Any],
+    loss_cfg: dict[str, Any],
+    run_name: str,
+    model,
+    bundle,
+    device,
+    output_root: Path,
+    config_paths: dict[str, str],
+    extra_metadata: dict[str, Any] | None = None,
+):
     target_mean = bundle.target_mean.to(device)
     target_std = bundle.target_std.to(device)
     model = model.to(device)
@@ -95,8 +106,15 @@ def run_training(*, cfg: dict[str, Any], loss_cfg: dict[str, Any], run_name: str
         yaml.safe_dump(cfg, f)
     with (run_dir / "loss_config_snapshot.yaml").open("w", encoding="utf-8") as f:
         yaml.safe_dump(loss_cfg, f)
+    metadata = {
+        "run_name": run_name,
+        "config_paths": config_paths,
+    }
+    if extra_metadata:
+        metadata.update(extra_metadata)
+
     with (run_dir / "metadata.json").open("w", encoding="utf-8") as f:
-        json.dump({"run_name": run_name, "config_paths": config_paths}, f, indent=2)
+        json.dump(metadata, f, indent=2)
 
     global_step = 0
     logs = []
@@ -160,6 +178,14 @@ def run_training(*, cfg: dict[str, Any], loss_cfg: dict[str, Any], run_name: str
         "best_val_mean_norm_mae": float(best_norm),
         "best_val_mean_raw_mae": float(best_raw_mae.mean()),
     }
+
+    if extra_metadata:
+        summary.update(
+            {
+                "git_commit": extra_metadata.get("git_commit", "unknown"),
+                "runtime": extra_metadata.get("runtime", {}),
+            }
+        )
     with (run_dir / "summary.json").open("w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
     print(summary)
