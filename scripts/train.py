@@ -41,6 +41,7 @@ def main() -> None:
     parser.add_argument("--config", required=True, help="Path to train config YAML")
     parser.add_argument("--loss", required=True, help="Path to loss config YAML")
     parser.add_argument("--run-name", required=True, help="Name for result directory")
+    parser.add_argument("--seed", type=int, default=None, help="Optional seed override")
     args = parser.parse_args()
 
     config_path = resolve_path(args.config)
@@ -48,6 +49,9 @@ def main() -> None:
 
     cfg = load_yaml(config_path)
     loss_cfg = load_yaml(loss_path)
+
+    if args.seed is not None:
+        cfg["seed"] = int(args.seed)
 
     seed = int(cfg.get("seed", 42))
     seed_everything(seed)
