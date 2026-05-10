@@ -5,7 +5,7 @@
 | A0 | 2026-05-08 | TinyRadialMPNN baseline, 3 epochs | 0.349324 | Working baseline |
 | A1 | 2026-05-08 | Aggressive scheduled Droplet, 3 epochs | 0.374723 | Archive; too aggressive |
 | A0-paired | 2026-05-10 | Paired baseline, 5 epochs | 0.322820 | Current smoke baseline |
-| A1b | pending | Gentle scheduled Droplet, 5 epochs | pending | Next scripted test |
+| A1b | 2026-05-10 | Gentle scheduled Droplet, scripted smoke, 5 epochs | 0.313806 | Tiny single-seed smoke win; proceed to A2 |
 
 ## Rules
 
