@@ -1,10 +1,3 @@
-from qm9sota.losses.jepa import (
-    build_jepa_loss,
-    EMATargetEncoder,
-    sample_atom_mask,
-    apply_atom_mask,
-)
-
 from __future__ import annotations
 
 from collections import defaultdict
@@ -187,13 +180,14 @@ def run_training(
         )
         ema_target = EMATargetEncoder(model).to(device)
     elif loss_name == "jepa":
-    jepa_cfg = loss_cfg["loss"]["jepa"]
-    jepa_loss_fn = build_jepa_loss(
-        jepa_cfg=jepa_cfg,
-        hidden_dim=int(cfg["model"]["hidden_dim"]),
-        device=device,
-    )
-    ema_encoder = EMATargetEncoder(model).to(device)
+        from qm9sota.losses.jepa import EMATargetEncoder, build_jepa_loss
+        hidden_dim = int(cfg["model"].get("hidden_dim", 128))
+        jepa_loss_mod = build_jepa_loss(
+            dict(loss_block.get("jepa", {})),
+            hidden_dim=hidden_dim,
+            device=device,
+        )
+        ema_target = EMATargetEncoder(model).to(device)
     else:
         raise ValueError(f"Unknown loss name: {loss_name}")
 
