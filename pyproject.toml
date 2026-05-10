@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qm9sota"
+version = "0.0.1"
+description = "Colab-first QM9 SOTA research stack with Droplet losses"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy",
+  "pandas",
+  "pyyaml",
+  "tqdm",
+  "torch_geometric",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

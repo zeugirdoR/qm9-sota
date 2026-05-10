@@ -1,0 +1,3 @@
+loss:
+  name: baseline
+  base_loss: smooth_l1
