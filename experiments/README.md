@@ -19,3 +19,4 @@
 | FULL10-A0-vs-A1b-MS3 | 2026-05-10 | Full split 10-epoch TinyRadialMPNN, seeds 42-44 | mean delta -0.000830; A1b wins 2/3 | Mixed; create slower/capped A1c schedule |
 | FULL10-A1c-diagnostic | 2026-05-10 | Capped/slower A1c tested on seeds 42 and 43 | improves seed 43 vs A1b but loses seed 42 | Stop A1c; keep A1b |
 | PGA-MV-B0-S43 | 2026-05-10 | Initial scalar PGA/multivector attention scaffold, seed 43 | norm MAE 0.361200 | Runs but weak; add edge-aware geometric attention next |
+| PGA-MV-M1-S43 | 2026-05-10 | Edge-aware PGA/MV attention, seed 43 | norm MAE 0.279057 | Large gain over B0; add radial/message value transport next |
