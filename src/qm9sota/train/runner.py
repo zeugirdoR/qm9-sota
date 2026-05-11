@@ -73,6 +73,7 @@ def train_one_epoch(
     droplet_loss=None,
     grad_clip: float = 5.0,
     jepa_ctx: dict | None = None,
+    target_index: int | None = None,
 ):
     from qm9sota.losses.jepa import apply_atom_mask, sample_atom_mask
 
