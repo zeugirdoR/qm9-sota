@@ -34,6 +34,34 @@ def make_optimizer(model, loss_fn, cfg: dict, jepa_loss=None):
     return torch.optim.AdamW(params)
 
 
+
+def get_target_index(cfg: dict) -> int | None:
+    target_cfg = cfg.get("target", {})
+    mode = target_cfg.get("mode", "all")
+
+    if mode == "all":
+        return None
+
+    if mode == "single":
+        if "index" not in target_cfg:
+            raise ValueError("target.mode='single' requires target.index")
+        return int(target_cfg["index"])
+
+    raise ValueError(f"Unknown target mode: {mode}")
+
+
+def select_target_if_needed(tensor, target_index: int | None):
+    if target_index is None:
+        return tensor
+    return tensor[:, target_index:target_index + 1]
+
+
+def primary_mae_for_target(norm_mae, target_index: int | None) -> float:
+    if target_index is None:
+        return float(norm_mae.mean())
+    return float(norm_mae[target_index])
+
+
 def train_one_epoch(
     model,
     loader,
@@ -63,11 +91,19 @@ def train_one_epoch(
         pred_norm = model(batch)
         y_norm = normalize_y(batch.y, target_mean, target_std)
 
+        pred_for_loss = select_target_if_needed(pred_norm, target_index)
+        y_for_loss = select_target_if_needed(y_norm, target_index)
+
         if droplet_loss is None:
-            sup_loss = F.smooth_l1_loss(pred_norm, y_norm)
+            sup_loss = F.smooth_l1_loss(pred_for_loss, y_for_loss)
             stats = {}
         else:
-            sup_loss, stats = droplet_loss(pred=pred_norm, target=y_norm, step=global_step)
+            if target_index is not None:
+                # Keep first single-target pass simple: supervised only.
+                sup_loss = F.smooth_l1_loss(pred_for_loss, y_for_loss)
+                stats = {}
+            else:
+                sup_loss, stats = droplet_loss(pred=pred_norm, target=y_norm, step=global_step)
         stats = dict(stats)
 
         tau = None
@@ -202,6 +238,7 @@ def run_training(
     optimizer = make_optimizer(model, droplet_loss, cfg, jepa_loss=jepa_loss_mod)
     grad_clip = float(cfg["optimizer"].get("grad_clip", 5.0))
     epochs = int(cfg["train"].get("epochs", 5))
+    target_index = get_target_index(cfg)
 
     run_dir = output_root / run_name
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -248,12 +285,13 @@ def run_training(
             global_step=global_step,
             droplet_loss=droplet_loss,
             grad_clip=grad_clip,
+            target_index=target_index,
             jepa_ctx=jepa_ctx,
         )
 
         raw_mae, norm_mae = evaluate_both(model, bundle.val_loader, device, target_mean, target_std)
         mean_raw = float(raw_mae.mean())
-        mean_norm = float(norm_mae.mean())
+        mean_norm = primary_mae_for_target(norm_mae, target_index)
 
         log = {
             "run": run_name,
@@ -291,6 +329,9 @@ def run_training(
         "best_epoch": best_epoch,
         "best_val_mean_norm_mae": float(best_norm),
         "best_val_mean_raw_mae": float(best_raw_mae.mean()),
+        "target_mode": cfg.get("target", {}).get("mode", "all"),
+        "target_name": cfg.get("target", {}).get("name", None),
+        "target_index": target_index,
     }
 
     if extra_metadata:
