@@ -70,3 +70,163 @@ def local_edge_volume_features(pos: torch.Tensor, edge_index: torch.Tensor) -> t
     dist2 = (rel * rel).sum(dim=-1).clamp_min(1e-12)
     dist = dist2.sqrt()
     return torch.stack([dist, dist2, torch.log1p(dist2)], dim=-1)
+
+
+def gaussian_rbf(
+    dist: torch.Tensor,
+    *,
+    num_basis: int = 32,
+    cutoff: float = 8.0,
+    gamma: float | None = None,
+) -> torch.Tensor:
+    """
+    Gaussian radial basis expansion.
+
+    dist: [E]
+    returns: [E, num_basis]
+    """
+    centers = torch.linspace(0.0, cutoff, num_basis, dtype=dist.dtype, device=dist.device)
+    if gamma is None:
+        spacing = cutoff / max(num_basis - 1, 1)
+        gamma = 1.0 / max(spacing * spacing, 1e-6)
+    return torch.exp(-gamma * (dist.unsqueeze(-1) - centers.unsqueeze(0)).pow(2))
+
+
+def radial_edge_features(
+    pos: torch.Tensor,
+    edge_index: torch.Tensor,
+    *,
+    num_basis: int = 32,
+    cutoff: float = 8.0,
+) -> torch.Tensor:
+    """
+    Rich radial edge features.
+
+    Returns [E, 3 + num_basis]:
+      distance
+      distance^2
+      log(1 + distance^2)
+      Gaussian RBF(distance)
+    """
+    src, dst = edge_index
+    rel = pos[src] - pos[dst]
+    dist2 = (rel * rel).sum(dim=-1).clamp_min(1e-12)
+    dist = dist2.sqrt()
+
+    base = torch.stack([dist, dist2, torch.log1p(dist2)], dim=-1)
+    rbf = gaussian_rbf(dist, num_basis=num_basis, cutoff=cutoff)
+    return torch.cat([base, rbf], dim=-1)
+
+
+def gaussian_rbf(
+    dist: torch.Tensor,
+    *,
+    num_basis: int = 32,
+    cutoff: float = 8.0,
+    gamma: float | None = None,
+) -> torch.Tensor:
+    """
+    Gaussian radial basis expansion.
+
+    dist: [E]
+    returns: [E, num_basis]
+    """
+    centers = torch.linspace(0.0, cutoff, num_basis, dtype=dist.dtype, device=dist.device)
+    if gamma is None:
+        spacing = cutoff / max(num_basis - 1, 1)
+        gamma = 1.0 / max(spacing * spacing, 1e-6)
+    return torch.exp(-gamma * (dist.unsqueeze(-1) - centers.unsqueeze(0)).pow(2))
+
+
+def radial_edge_features(
+    pos: torch.Tensor,
+    edge_index: torch.Tensor,
+    *,
+    num_basis: int = 32,
+    cutoff: float = 8.0,
+) -> torch.Tensor:
+    """
+    Rich radial edge features.
+
+    Returns [E, 3 + num_basis]:
+      distance
+      distance^2
+      log(1 + distance^2)
+      Gaussian RBF(distance)
+    """
+    src, dst = edge_index
+    rel = pos[src] - pos[dst]
+    dist2 = (rel * rel).sum(dim=-1).clamp_min(1e-12)
+    dist = dist2.sqrt()
+
+    base = torch.stack([dist, dist2, torch.log1p(dist2)], dim=-1)
+    rbf = gaussian_rbf(dist, num_basis=num_basis, cutoff=cutoff)
+    return torch.cat([base, rbf], dim=-1)
+
+
+def gaussian_rbf(
+    dist: torch.Tensor,
+    *,
+    num_basis: int = 32,
+    cutoff: float = 8.0,
+    gamma: float | None = None,
+) -> torch.Tensor:
+    """
+    Gaussian radial basis expansion.
+
+    dist: [E]
+    returns: [E, num_basis]
+    """
+    centers = torch.linspace(
+        0.0,
+        cutoff,
+        num_basis,
+        dtype=dist.dtype,
+        device=dist.device,
+    )
+
+    if gamma is None:
+        spacing = cutoff / max(num_basis - 1, 1)
+        gamma = 1.0 / max(spacing * spacing, 1e-6)
+
+    return torch.exp(-gamma * (dist.unsqueeze(-1) - centers.unsqueeze(0)).pow(2))
+
+
+def radial_edge_features(
+    pos: torch.Tensor,
+    edge_index: torch.Tensor,
+    *,
+    num_basis: int = 32,
+    cutoff: float = 8.0,
+) -> torch.Tensor:
+    """
+    Rich radial edge features.
+
+    Returns [E, 3 + num_basis]:
+      distance
+      distance^2
+      log(1 + distance^2)
+      Gaussian RBF(distance)
+    """
+    src, dst = edge_index
+    rel = pos[src] - pos[dst]
+
+    dist2 = (rel * rel).sum(dim=-1).clamp_min(1e-12)
+    dist = dist2.sqrt()
+
+    base = torch.stack(
+        [
+            dist,
+            dist2,
+            torch.log1p(dist2),
+        ],
+        dim=-1,
+    )
+
+    rbf = gaussian_rbf(
+        dist,
+        num_basis=num_basis,
+        cutoff=cutoff,
+    )
+
+    return torch.cat([base, rbf], dim=-1)
