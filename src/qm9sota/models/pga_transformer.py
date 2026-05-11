@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import math
+
 import torch
 import torch.nn as nn
 
 from qm9sota.geometry.info_volume import (
     local_edge_volume_features,
     radial_edge_features,
-    radial_cauchy_binet_edge_features,
+    cauchy_binet_edge_features,
 )
 from qm9sota.geometry.multivector import Multivector
 from qm9sota.models.multivector.attention import (
@@ -58,20 +60,38 @@ class FamilyHeads(nn.Module):
         return out
 
 
+def scheduled_lambda(
+    epoch_float: float,
+    *,
+    warmup_epochs: float,
+    ramp_epochs: float,
+    lambda_end: float,
+) -> float:
+    if epoch_float < warmup_epochs:
+        return 0.0
+
+    if ramp_epochs <= 0:
+        return lambda_end
+
+    frac = max(0.0, min(1.0, (epoch_float - warmup_epochs) / ramp_epochs))
+    return lambda_end * 0.5 * (1.0 - math.cos(math.pi * frac))
+
+
 class PGAMultivectorTransformer(nn.Module):
     """
     PGA/multivector transformer prototype.
 
-    Edge feature modes:
-      simple:              [distance, distance^2, log(1 + distance^2)]
-      radial:              simple + Gaussian RBF
-      radial_cauchy_binet: radial + local Gram/Cauchy-Binet volume summaries
+    Main validated M4 path:
+      radial edge features
+      scalar + vector edge attention
+      invariant vector magnitude feedback
+      single prediction head
 
-    M4:
-      vector-channel equivariant edge transport + scalar invariant feedback
+    Optional M6b path:
+      scheduled Cauchy-Binet local volume attention bias
+      score += lambda_cb(epoch) * cb_bias(cb_features)
 
-    M6:
-      add local Cauchy-Binet / Gram-volume edge features
+    Cauchy-Binet is not concatenated into the main edge message.
     """
 
     def __init__(
@@ -87,6 +107,10 @@ class PGAMultivectorTransformer(nn.Module):
         cutoff: float = 8.0,
         vector_channels: int = 8,
         head_mode: str = "single",
+        use_cb_bias: bool = False,
+        cb_lambda_end: float = 0.10,
+        cb_warmup_epochs: float = 3.0,
+        cb_ramp_epochs: float = 5.0,
     ):
         super().__init__()
 
@@ -97,6 +121,13 @@ class PGAMultivectorTransformer(nn.Module):
         self.cutoff = cutoff
         self.vector_channels = vector_channels
         self.head_mode = head_mode
+
+        self.use_cb_bias = use_cb_bias
+        self.cb_lambda_end = cb_lambda_end
+        self.cb_warmup_epochs = cb_warmup_epochs
+        self.cb_ramp_epochs = cb_ramp_epochs
+
+        self.current_epoch_float = 0.0
 
         self.node_in = nn.Linear(node_in_dim, hidden_dim)
 
@@ -117,10 +148,8 @@ class PGAMultivectorTransformer(nn.Module):
         elif attention_mode == "edge":
             if edge_feature_mode == "simple":
                 edge_dim = 3
-            elif edge_feature_mode == "radial":
+            elif edge_feature_mode in {"radial", "radial_cb_bias"}:
                 edge_dim = 3 + num_rbf
-            elif edge_feature_mode == "radial_cauchy_binet":
-                edge_dim = 3 + num_rbf + 32
             else:
                 raise ValueError(f"Unknown edge_feature_mode: {edge_feature_mode}")
 
@@ -133,6 +162,8 @@ class PGAMultivectorTransformer(nn.Module):
                             hidden_dim=hidden_dim,
                             vector_channels=vector_channels,
                             dropout=dropout,
+                            cb_dim=32,
+                            use_cb_bias=use_cb_bias,
                         )
                     )
                     for _ in range(num_layers)
@@ -149,6 +180,20 @@ class PGAMultivectorTransformer(nn.Module):
         else:
             raise ValueError(f"Unknown head_mode: {head_mode}")
 
+    def set_epoch_float(self, epoch_float: float) -> None:
+        self.current_epoch_float = float(epoch_float)
+
+    def cb_lambda(self) -> float:
+        if not self.use_cb_bias:
+            return 0.0
+
+        return scheduled_lambda(
+            self.current_epoch_float,
+            warmup_epochs=self.cb_warmup_epochs,
+            ramp_epochs=self.cb_ramp_epochs,
+            lambda_end=self.cb_lambda_end,
+        )
+
     def _edge_features(self, data) -> torch.Tensor:
         pos = data.pos.float()
         edge_index = data.edge_index
@@ -156,7 +201,7 @@ class PGAMultivectorTransformer(nn.Module):
         if self.edge_feature_mode == "simple":
             return local_edge_volume_features(pos, edge_index)
 
-        if self.edge_feature_mode == "radial":
+        if self.edge_feature_mode in {"radial", "radial_cb_bias"}:
             return radial_edge_features(
                 pos,
                 edge_index,
@@ -164,15 +209,16 @@ class PGAMultivectorTransformer(nn.Module):
                 cutoff=self.cutoff,
             )
 
-        if self.edge_feature_mode == "radial_cauchy_binet":
-            return radial_cauchy_binet_edge_features(
-                pos,
-                edge_index,
-                num_basis=self.num_rbf,
-                cutoff=self.cutoff,
-            )
-
         raise ValueError(f"Unknown edge_feature_mode: {self.edge_feature_mode}")
+
+    def _cb_features(self, data) -> torch.Tensor | None:
+        if not self.use_cb_bias:
+            return None
+
+        return cauchy_binet_edge_features(
+            data.pos.float(),
+            data.edge_index,
+        )
 
     def encode_nodes(self, data):
         s = self.node_in(data.x.float())
@@ -185,6 +231,8 @@ class PGAMultivectorTransformer(nn.Module):
 
         if self.attention_mode == "edge":
             edge_features = self._edge_features(data)
+            cb_features = self._cb_features(data)
+            lambda_cb = self.cb_lambda()
 
             for layer in self.layers:
                 mv = layer(
@@ -192,6 +240,8 @@ class PGAMultivectorTransformer(nn.Module):
                     edge_index=data.edge_index,
                     edge_features=edge_features,
                     pos=data.pos.float(),
+                    cb_features=cb_features,
+                    lambda_cb=lambda_cb,
                 )
 
             return mv.s
@@ -228,4 +278,8 @@ def build_pga_transformer(cfg: dict) -> PGAMultivectorTransformer:
         cutoff=float(model_cfg.get("cutoff", 8.0)),
         vector_channels=int(model_cfg.get("vector_channels", 8)),
         head_mode=str(model_cfg.get("head_mode", "single")),
+        use_cb_bias=bool(model_cfg.get("use_cb_bias", False)),
+        cb_lambda_end=float(model_cfg.get("cb_lambda_end", 0.10)),
+        cb_warmup_epochs=float(model_cfg.get("cb_warmup_epochs", 3.0)),
+        cb_ramp_epochs=float(model_cfg.get("cb_ramp_epochs", 5.0)),
     )

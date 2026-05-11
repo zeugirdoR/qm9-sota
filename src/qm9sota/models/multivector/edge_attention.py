@@ -16,23 +16,27 @@ class MVEdgeAttentionConfig:
     hidden_dim: int = 128
     vector_channels: int = 8
     dropout: float = 0.0
+    cb_dim: int = 32
+    use_cb_bias: bool = False
 
 
 class MultivectorEdgeAttention(nn.Module):
     """
-    M4 edge-restricted scalar + vector multivector attention.
+    Edge-restricted scalar + vector multivector attention.
 
-    Keeps the successful M3 scalar pathway:
-      score_ij = q(dst) · k(src) + edge_bias(edge_features)
-      scalar message = MLP([s_src, s_dst, edge_features])
+    Main path is the validated M4 pathway:
+      - scalar q/k edge attention
+      - radial edge features
+      - MPNN-style scalar message
+      - equivariant vector message from learned gates times edge directions
+      - invariant vector magnitudes fed back into scalar state
 
-    Adds an equivariant vector pathway:
-      direction_ij = (pos_src - pos_dst) / ||pos_src - pos_dst||
-      vector message = learned gate(edge_context) * direction_ij
-      aggregate vector messages per destination node
+    Optional M6b path:
+      - Cauchy-Binet / local Gram-volume features enter only as a scheduled
+        additive attention bias:
+            score += lambda_cb * cb_bias(cb_features)
 
-    Scalar invariance is preserved by feeding vector norms back into scalar updates.
-    Vector channels are equivariant because directions rotate with the molecule.
+    This keeps the strong M4 path intact and introduces CB information gently.
     """
 
     def __init__(self, cfg: MVEdgeAttentionConfig):
@@ -60,19 +64,27 @@ class MultivectorEdgeAttention(nn.Module):
             nn.Linear(h, h),
         )
 
-        # Vector gates create Cv directional channels per edge.
         self.vector_gate = nn.Sequential(
             nn.Linear(2 * d + cfg.edge_dim, h),
             nn.SiLU(),
             nn.Linear(h, cv),
         )
 
-        # Feed vector magnitudes back into scalar update.
         self.vector_to_scalar = nn.Sequential(
             nn.Linear(cv, h),
             nn.SiLU(),
             nn.Linear(h, h),
         )
+
+        if cfg.use_cb_bias:
+            self.cb_bias = nn.Sequential(
+                nn.LayerNorm(cfg.cb_dim),
+                nn.Linear(cfg.cb_dim, h),
+                nn.SiLU(),
+                nn.Linear(h, 1),
+            )
+        else:
+            self.cb_bias = None
 
         self.out_s = nn.Linear(h, d)
         self.norm_s = nn.LayerNorm(d)
@@ -86,6 +98,8 @@ class MultivectorEdgeAttention(nn.Module):
         edge_index: torch.Tensor,
         edge_features: torch.Tensor,
         pos: torch.Tensor,
+        cb_features: torch.Tensor | None = None,
+        lambda_cb: float | torch.Tensor = 0.0,
     ) -> Multivector:
         if mv.s is None:
             raise ValueError("MultivectorEdgeAttention currently requires scalar channels mv.s")
@@ -99,6 +113,14 @@ class MultivectorEdgeAttention(nn.Module):
 
         score = (q[dst] * k[src]).sum(dim=-1) / math.sqrt(q.shape[-1])
         score = score + self.edge_bias(edge_features).squeeze(-1)
+
+        if self.cb_bias is not None and cb_features is not None:
+            if not torch.is_tensor(lambda_cb):
+                lambda_cb_t = score.new_tensor(float(lambda_cb))
+            else:
+                lambda_cb_t = lambda_cb.to(dtype=score.dtype, device=score.device)
+
+            score = score + lambda_cb_t * self.cb_bias(cb_features).squeeze(-1)
 
         max_per_dst = s.new_full((num_nodes,), -float("inf"))
         max_per_dst.scatter_reduce_(0, dst, score, reduce="amax", include_self=True)
@@ -119,7 +141,7 @@ class MultivectorEdgeAttention(nn.Module):
         scalar_agg = s.new_zeros(num_nodes, edge_s.shape[-1])
         scalar_agg.index_add_(0, dst, scalar_msg)
 
-        # Vector message pathway.
+        # Equivariant vector message pathway.
         rel = pos[src].float() - pos[dst].float()
         rel_norm = rel.norm(dim=-1, keepdim=True).clamp_min(1e-8)
         direction = rel / rel_norm
@@ -132,10 +154,8 @@ class MultivectorEdgeAttention(nn.Module):
         vector_agg = s.new_zeros(num_nodes, cv, 3)
         vector_agg.index_add_(0, dst, vector_msg)
 
-        if mv.v is not None:
-            # If a previous vector state exists, residual-add matching channels.
-            if mv.v.shape[1] == cv:
-                vector_agg = vector_agg + mv.v
+        if mv.v is not None and mv.v.shape[1] == cv:
+            vector_agg = vector_agg + mv.v
 
         # Invariant vector magnitude feedback.
         vector_mag = vector_agg.pow(2).sum(dim=-1).clamp_min(1e-12).sqrt()
