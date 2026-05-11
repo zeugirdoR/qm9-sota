@@ -27,3 +27,4 @@
 | PGA-MV-M5-MS3 | 2026-05-10 | Family-head PGA/MV, seeds 42-44 | mean 0.140485; wins 1/3 vs M4 | Diagnostic only; keep M4, move to Cauchy-Binet M6 |
 | PGA-MV-M4-S45 | 2026-05-10 | PGA/MV vector backbone, seed 45 | norm MAE 0.131331 | Confirms M4 robustness; promote M4 as primary backbone |
 | PGA-MV-M6b-CB-S43 | 2026-05-10 | Scheduled/gated Cauchy-Binet attention bias, seed 43 | norm MAE 0.138074 | Candidate; run seeds 42/44/45 |
+| PGA-MV-M6b-CB-MS4 | 2026-05-10 | Scheduled/gated CB bias, seeds 42-45 | mean delta +0.002880; wins 2/4 | Diagnostic only; keep M4 |
