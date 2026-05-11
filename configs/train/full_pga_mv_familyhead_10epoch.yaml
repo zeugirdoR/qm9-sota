@@ -1,0 +1,42 @@
+seed: 42
+device: cuda
+
+paths:
+  results_dir: results
+
+data:
+  root: /content/data/QM9
+  train_size: 110000
+  val_size: 10000
+  smoke: false
+  smoke_train_size: 20000
+  smoke_val_size: 2000
+  batch_size: 128
+  num_workers: 0
+
+model:
+  name: pga_multivector_transformer
+  node_in_dim: 11
+  hidden_dim: 128
+  out_dim: 19
+  num_layers: 4
+  dropout: 0.0
+  attention_mode: edge
+  edge_feature_mode: radial
+  num_rbf: 32
+  cutoff: 8.0
+  vector_channels: 8
+  head_mode: family
+
+optimizer:
+  name: adamw
+  lr: 0.0003
+  weight_decay: 0.000001
+  grad_clip: 5.0
+
+train:
+  epochs: 10
+
+metrics:
+  primary: mean_normalized_mae
+  save_per_target: true
