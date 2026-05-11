@@ -20,3 +20,4 @@
 | FULL10-A1c-diagnostic | 2026-05-10 | Capped/slower A1c tested on seeds 42 and 43 | improves seed 43 vs A1b but loses seed 42 | Stop A1c; keep A1b |
 | PGA-MV-B0-S43 | 2026-05-10 | Initial scalar PGA/multivector attention scaffold, seed 43 | norm MAE 0.361200 | Runs but weak; add edge-aware geometric attention next |
 | PGA-MV-M1-S43 | 2026-05-10 | Edge-aware PGA/MV attention, seed 43 | norm MAE 0.279057 | Large gain over B0; add radial/message value transport next |
+| PGA-MV-M2-S43 | 2026-05-10 | Edge-aware PGA/MV with MPNN-style value transport, seed 43 | norm MAE 0.260359 | Large gain over M1; add radial basis edge features next |
