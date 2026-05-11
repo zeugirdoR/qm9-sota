@@ -1,0 +1,26 @@
+loss:
+  name: group_droplet
+  base_loss: smooth_l1
+
+  warmup_steps: auto_one_epoch
+  anneal_steps: auto_eight_epochs
+
+  delta_start: 0.05
+  delta_end: 0.35
+
+  nu_start: 0.05
+  nu_end: 0.50
+
+  alpha_start: 0.05
+  alpha_end: 0.50
+
+  temp_start: 1.0
+  temp_end: 8.0
+
+  # More conservative than original A1b because M4 is already strong.
+  lambda_start: 0.0
+  lambda_end: 0.20
+
+  soft_gate: true
+  min_weight: 0.20
+  normalize_by_weight: true

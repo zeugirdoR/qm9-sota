@@ -167,6 +167,13 @@ def run_training(
 
     if loss_name == "droplet":
         _build_supervised({**loss_block, "name": "droplet"})
+    elif loss_name == "group_droplet":
+        from qm9sota.losses.group_droplet import build_group_droplet_loss
+        droplet_loss = build_group_droplet_loss(
+            {"loss": loss_block},
+            steps_per_epoch=len(bundle.train_loader),
+            device=device,
+        )
     elif loss_name == "baseline":
         pass
     elif loss_name == "jepa_aux":
