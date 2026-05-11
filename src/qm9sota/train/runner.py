@@ -62,6 +62,37 @@ def primary_mae_for_target(norm_mae, target_index: int | None) -> float:
     return float(norm_mae[target_index])
 
 
+
+def make_scheduler(optimizer, cfg: dict):
+    sched_cfg = cfg.get("scheduler", {})
+    name = sched_cfg.get("name", "none")
+
+    if name in {"none", None}:
+        return None
+
+    if name != "warmup_cosine":
+        raise ValueError(f"Unknown scheduler: {name}")
+
+    epochs = int(cfg["train"].get("epochs", 5))
+    warmup_epochs = float(sched_cfg.get("warmup_epochs", 5.0))
+    min_lr_ratio = float(sched_cfg.get("min_lr_ratio", 0.03))
+
+    def lr_lambda(epoch_idx: int):
+        # epoch_idx is 0-based for the upcoming epoch.
+        e = float(epoch_idx)
+
+        if warmup_epochs > 0 and e < warmup_epochs:
+            return max(min_lr_ratio, (e + 1.0) / warmup_epochs)
+
+        denom = max(1.0, float(epochs) - warmup_epochs)
+        t = min(1.0, max(0.0, (e - warmup_epochs) / denom))
+
+        # cosine from 1.0 to min_lr_ratio
+        return min_lr_ratio + (1.0 - min_lr_ratio) * 0.5 * (1.0 + __import__("math").cos(__import__("math").pi * t))
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+
+
 def train_one_epoch(
     model,
     loader,
@@ -237,6 +268,7 @@ def run_training(
         raise ValueError(f"Unknown loss name: {loss_name}")
 
     optimizer = make_optimizer(model, droplet_loss, cfg, jepa_loss=jepa_loss_mod)
+    scheduler = make_scheduler(optimizer, cfg)
     grad_clip = float(cfg["optimizer"].get("grad_clip", 5.0))
     epochs = int(cfg["train"].get("epochs", 5))
     target_index = get_target_index(cfg)
