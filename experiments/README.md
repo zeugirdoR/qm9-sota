@@ -22,3 +22,4 @@
 | PGA-MV-M1-S43 | 2026-05-10 | Edge-aware PGA/MV attention, seed 43 | norm MAE 0.279057 | Large gain over B0; add radial/message value transport next |
 | PGA-MV-M2-S43 | 2026-05-10 | Edge-aware PGA/MV with MPNN-style value transport, seed 43 | norm MAE 0.260359 | Large gain over M1; add radial basis edge features next |
 | PGA-MV-M3-S43 | 2026-05-10 | PGA/MV with radial edge features, seed 43 | norm MAE 0.251151 | Improves over M2; add vector channels next |
+| PGA-MV-M4-S43 | 2026-05-10 | PGA/MV with equivariant vector channels, seed 43 | norm MAE 0.144428 | Major breakthrough; validate seeds 42/44 before adding losses |
