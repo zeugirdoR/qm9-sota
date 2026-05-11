@@ -20,15 +20,12 @@ class MVEdgeAttentionConfig:
 
 class MultivectorEdgeAttention(nn.Module):
     """
-    Edge-restricted scalar multivector attention.
+    Edge-restricted scalar multivector attention with MPNN-style value transport.
 
-    This is M1:
-      - attention is restricted to molecular edges
+    M2:
       - attention score uses scalar q/k contraction + geometric edge bias
-      - value update uses source scalar state and edge features
+      - message value depends jointly on h_src, h_dst, and edge features
       - aggregation is softmax-normalized per destination node
-
-    Later stages will add vector/bivector value transport.
     """
 
     def __init__(self, cfg: MVEdgeAttentionConfig):
@@ -40,7 +37,6 @@ class MultivectorEdgeAttention(nn.Module):
 
         self.q_s = nn.Linear(d, h)
         self.k_s = nn.Linear(d, h)
-        self.v_s = nn.Linear(d, h)
 
         self.edge_bias = nn.Sequential(
             nn.Linear(cfg.edge_dim, h),
@@ -48,8 +44,10 @@ class MultivectorEdgeAttention(nn.Module):
             nn.Linear(h, 1),
         )
 
-        self.edge_value = nn.Sequential(
-            nn.Linear(cfg.edge_dim, h),
+        self.edge_msg = nn.Sequential(
+            nn.Linear(2 * d + cfg.edge_dim, h),
+            nn.SiLU(),
+            nn.Linear(h, h),
             nn.SiLU(),
             nn.Linear(h, h),
         )
@@ -72,13 +70,10 @@ class MultivectorEdgeAttention(nn.Module):
 
         q = self.q_s(s)
         k = self.k_s(s)
-        v = self.v_s(s)
 
-        # Edge score for message src -> dst.
         score = (q[dst] * k[src]).sum(dim=-1) / math.sqrt(q.shape[-1])
         score = score + self.edge_bias(edge_features).squeeze(-1)
 
-        # Stable softmax per destination node.
         num_nodes = s.shape[0]
 
         max_per_dst = s.new_full((num_nodes,), -float("inf"))
@@ -87,10 +82,13 @@ class MultivectorEdgeAttention(nn.Module):
         exp_score = torch.exp(score - max_per_dst[dst])
         denom = s.new_zeros(num_nodes)
         denom.index_add_(0, dst, exp_score)
+
         attn = exp_score / denom[dst].clamp_min(1e-12)
         attn = self.dropout(attn)
 
-        edge_v = v[src] + self.edge_value(edge_features)
+        edge_context = torch.cat([s[src], s[dst], edge_features], dim=-1)
+        edge_v = self.edge_msg(edge_context)
+
         msg = edge_v * attn.unsqueeze(-1)
 
         agg = s.new_zeros(num_nodes, edge_v.shape[-1])
