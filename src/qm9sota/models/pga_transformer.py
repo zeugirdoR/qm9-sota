@@ -25,14 +25,15 @@ class PGAMultivectorTransformer(nn.Module):
 
     Modes:
       dense: dense scalar multivector attention from B0
-      edge:  edge-restricted scalar multivector attention from M1/M2/M3
+      edge:  edge-restricted scalar/vector multivector attention from M1-M4
 
     Edge feature modes:
       simple: [distance, distance^2, log(1 + distance^2)]
       radial: simple features + Gaussian radial basis expansion
 
-    This is still a scalar-first multivector scaffold. Vector/bivector value
-    transport comes in later stages.
+    M4 adds vector channels generated from learned edge gates times relative
+    directions. Scalar predictions remain invariant because vector magnitudes
+    feed back into scalar channels.
     """
 
     def __init__(
@@ -46,6 +47,7 @@ class PGAMultivectorTransformer(nn.Module):
         edge_feature_mode: str = "radial",
         num_rbf: int = 32,
         cutoff: float = 8.0,
+        vector_channels: int = 8,
     ):
         super().__init__()
 
@@ -54,6 +56,7 @@ class PGAMultivectorTransformer(nn.Module):
         self.edge_feature_mode = edge_feature_mode
         self.num_rbf = num_rbf
         self.cutoff = cutoff
+        self.vector_channels = vector_channels
 
         self.node_in = nn.Linear(node_in_dim, hidden_dim)
 
@@ -86,6 +89,7 @@ class PGAMultivectorTransformer(nn.Module):
                             scalar_dim=hidden_dim,
                             edge_dim=edge_dim,
                             hidden_dim=hidden_dim,
+                            vector_channels=vector_channels,
                             dropout=dropout,
                         )
                     )
@@ -136,6 +140,7 @@ class PGAMultivectorTransformer(nn.Module):
                     mv,
                     edge_index=data.edge_index,
                     edge_features=edge_features,
+                    pos=data.pos.float(),
                 )
 
             return mv.s
@@ -170,4 +175,5 @@ def build_pga_transformer(cfg: dict) -> PGAMultivectorTransformer:
         edge_feature_mode=str(model_cfg.get("edge_feature_mode", "radial")),
         num_rbf=int(model_cfg.get("num_rbf", 32)),
         cutoff=float(model_cfg.get("cutoff", 8.0)),
+        vector_channels=int(model_cfg.get("vector_channels", 8)),
     )
