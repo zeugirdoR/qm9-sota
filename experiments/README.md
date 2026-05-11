@@ -29,3 +29,4 @@
 | PGA-MV-M6b-CB-S43 | 2026-05-10 | Scheduled/gated Cauchy-Binet attention bias, seed 43 | norm MAE 0.138074 | Candidate; run seeds 42/44/45 |
 | PGA-MV-M6b-CB-MS4 | 2026-05-10 | Scheduled/gated CB bias, seeds 42-45 | mean delta +0.002880; wins 2/4 | Diagnostic only; keep M4 |
 | PGA-MV-M4D-S43 | 2026-05-10 | M4 vector backbone + group-wise Droplet, seed 43 | norm MAE 0.137896 | Candidate; run seeds 42/44/45 |
+| PGA-MV-M4D-MS4 | 2026-05-10 | M4 + group-wise Droplet, seeds 42-45 | mean delta +0.005283; wins 1/4 | Diagnostic only; keep M4 |
