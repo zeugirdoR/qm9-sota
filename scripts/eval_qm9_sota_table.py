@@ -26,92 +26,65 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # 12 U0_atom, 13 U_atom, 14 H_atom, 15 G_atom,
 # 16 A, 17 B, 18 C
 
-SOTA12: List[Dict] = [
-    {
-        "target": "alpha",
-        "pyg_index": 1,
-        "unit": "a0^3",
-        "conversion": 1.0,
-        "equiformer_v2": 0.050,
-    },
-    {
-        "target": "gap",
-        "pyg_index": 4,
-        "unit": "meV",
-        "conversion": 1000.0,
-        "equiformer_v2": 29.0,
-    },
-    {
-        "target": "homo",
-        "pyg_index": 2,
-        "unit": "meV",
-        "conversion": 1000.0,
-        "equiformer_v2": 14.0,
-    },
-    {
-        "target": "lumo",
-        "pyg_index": 3,
-        "unit": "meV",
-        "conversion": 1000.0,
-        "equiformer_v2": 13.0,
-    },
-    {
-        "target": "mu",
-        "pyg_index": 0,
-        "unit": "D",
-        "conversion": 1.0,
-        "equiformer_v2": 0.010,
-    },
-    {
-        "target": "Cv",
-        "pyg_index": 11,
-        "unit": "cal/mol/K",
-        "conversion": 1.0,
-        "equiformer_v2": 0.023,
-    },
-    {
-        "target": "G",
-        "pyg_index": 10,
-        "unit": "meV",
-        "conversion": 1000.0,
-        "equiformer_v2": 7.57,
-    },
-    {
-        "target": "H",
-        "pyg_index": 9,
-        "unit": "meV",
-        "conversion": 1000.0,
-        "equiformer_v2": 6.22,
-    },
-    {
-        "target": "r2",
-        "pyg_index": 5,
-        "unit": "a0^2",
-        "conversion": 1.0,
-        "equiformer_v2": 0.186,
-    },
-    {
-        "target": "U",
-        "pyg_index": 8,
-        "unit": "meV",
-        "conversion": 1000.0,
-        "equiformer_v2": 6.49,
-    },
-    {
-        "target": "U0",
-        "pyg_index": 7,
-        "unit": "meV",
-        "conversion": 1000.0,
-        "equiformer_v2": 6.17,
-    },
-    {
-        "target": "zpve",
-        "pyg_index": 6,
-        "unit": "meV",
-        "conversion": 1000.0,
-        "equiformer_v2": 1.47,
-    },
+SOTA12_BASE: List[Dict] = [
+    {"target": "alpha", "pyg_index": 1, "unit": "a0^3", "conversion": 1.0, "equiformer_v2": 0.050},
+    {"target": "gap", "pyg_index": 4, "unit": "meV", "conversion": 1000.0, "equiformer_v2": 29.0},
+    {"target": "homo", "pyg_index": 2, "unit": "meV", "conversion": 1000.0, "equiformer_v2": 14.0},
+    {"target": "lumo", "pyg_index": 3, "unit": "meV", "conversion": 1000.0, "equiformer_v2": 13.0},
+    {"target": "mu", "pyg_index": 0, "unit": "D", "conversion": 1.0, "equiformer_v2": 0.010},
+    {"target": "Cv", "pyg_index": 11, "unit": "cal/mol/K", "conversion": 1.0, "equiformer_v2": 0.023},
+    {"target": "r2", "pyg_index": 5, "unit": "a0^2", "conversion": 1.0, "equiformer_v2": 0.186},
+    {"target": "zpve", "pyg_index": 6, "unit": "meV", "conversion": 1000.0, "equiformer_v2": 1.47},
 ]
+
+
+def sota12_targets(energy_mode: str) -> List[Dict]:
+    """
+    Build the 12-target SOTA-style table.
+
+    energy_mode='total':
+      U0/U/H/G use PyG total-energy indices 7-10.
+
+    energy_mode='atomization':
+      U0/U/H/G use PyG atomization-energy indices 12-15.
+      This is usually the appropriate mode for comparison to tiny meV
+      QM9 energy errors in common benchmark tables.
+    """
+    rows = list(SOTA12_BASE)
+
+    if energy_mode == "total":
+        energy_rows = [
+            {"target": "G", "pyg_index": 10, "unit": "meV", "conversion": 1000.0, "equiformer_v2": 7.57},
+            {"target": "H", "pyg_index": 9, "unit": "meV", "conversion": 1000.0, "equiformer_v2": 6.22},
+            {"target": "U", "pyg_index": 8, "unit": "meV", "conversion": 1000.0, "equiformer_v2": 6.49},
+            {"target": "U0", "pyg_index": 7, "unit": "meV", "conversion": 1000.0, "equiformer_v2": 6.17},
+        ]
+    elif energy_mode == "atomization":
+        energy_rows = [
+            {"target": "G", "pyg_index": 15, "unit": "meV", "conversion": 1000.0, "equiformer_v2": 7.57},
+            {"target": "H", "pyg_index": 14, "unit": "meV", "conversion": 1000.0, "equiformer_v2": 6.22},
+            {"target": "U", "pyg_index": 13, "unit": "meV", "conversion": 1000.0, "equiformer_v2": 6.49},
+            {"target": "U0", "pyg_index": 12, "unit": "meV", "conversion": 1000.0, "equiformer_v2": 6.17},
+        ]
+    else:
+        raise ValueError(f"Unknown energy_mode: {energy_mode}")
+
+    # Match the usual table order.
+    ordered = [
+        rows[0],  # alpha
+        rows[1],  # gap
+        rows[2],  # homo
+        rows[3],  # lumo
+        rows[4],  # mu
+        rows[5],  # Cv
+        energy_rows[0],  # G
+        energy_rows[1],  # H
+        rows[6],  # r2
+        energy_rows[2],  # U
+        energy_rows[3],  # U0
+        rows[7],  # zpve
+    ]
+    return ordered
 
 
 def resolve_path(path_like: str | Path, *, base: Path = REPO_ROOT) -> Path:
@@ -175,6 +148,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=None, help="Split/model seed override. Defaults to config seed.")
     parser.add_argument("--batch-size", type=int, default=None, help="Evaluation batch size override.")
     parser.add_argument("--output", default=None, help="Output CSV path. Defaults to run-dir/qm9_sota12_eval.csv.")
+    parser.add_argument("--energy-mode", choices=["atomization", "total"], default="atomization", help="Energy-target convention for U0/U/H/G comparison.")
     args = parser.parse_args()
 
     config_path = resolve_path(args.config)
@@ -231,7 +205,7 @@ def main() -> None:
 
     rows = []
 
-    for item in SOTA12:
+    for item in sota12_targets(args.energy_mode):
         idx = int(item["pyg_index"])
         raw = float(raw_mae[idx].item())
         converted = raw * float(item["conversion"])
@@ -265,6 +239,7 @@ def main() -> None:
         "dataset_size": len(dataset),
         "test_size": len(test_idx),
         "output": str(output_path),
+        "energy_mode": args.energy_mode,
         "mean_ratio_ours_to_equiformer_v2": float(df["ratio_ours_to_equiformer_v2"].mean()),
         "num_targets_beating_equiformer_v2": int((df["ours_minus_equiformer_v2"] < 0).sum()),
     }
