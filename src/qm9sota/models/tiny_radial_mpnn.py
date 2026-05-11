@@ -93,14 +93,20 @@ class TinyRadialMPNN(nn.Module):
         return pred_norm
 
 
-def build_model(cfg: dict) -> nn.Module:
-    model_cfg = cfg["model"]
+def build_model(cfg: dict):
+    model_cfg = cfg.get("model", {})
     name = model_cfg.get("name", "tiny_radial_mpnn")
-    if name != "tiny_radial_mpnn":
-        raise ValueError(f"Unknown model: {name}")
-    return TinyRadialMPNN(
-        node_in_dim=11,
-        hidden_dim=int(model_cfg.get("hidden_dim", 128)),
-        out_dim=int(model_cfg.get("out_dim", 19)),
-        num_layers=int(model_cfg.get("num_layers", 3)),
-    )
+
+    if name == "tiny_radial_mpnn":
+        return TinyRadialMPNN(
+            node_in_dim=int(model_cfg.get("node_in_dim", 11)),
+            hidden_dim=int(model_cfg.get("hidden_dim", 128)),
+            out_dim=int(model_cfg.get("out_dim", 19)),
+            num_layers=int(model_cfg.get("num_layers", 3)),
+        )
+
+    if name == "pga_multivector_transformer":
+        from qm9sota.models.pga_transformer import build_pga_transformer
+        return build_pga_transformer(cfg)
+
+    raise ValueError(f"Unknown model: {name}")
