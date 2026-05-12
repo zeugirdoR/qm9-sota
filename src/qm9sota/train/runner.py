@@ -35,7 +35,13 @@ def make_optimizer(model, loss_fn, cfg: dict, jepa_loss=None):
 
 
 
-def get_target_index(cfg: dict) -> int | None:
+def get_target_index(cfg: dict):
+    """
+    Returns:
+      None for all-target mode
+      int for single-target mode
+      list[int] for multi-target mode
+    """
     target_cfg = cfg.get("target", {})
     mode = target_cfg.get("mode", "all")
 
@@ -47,19 +53,40 @@ def get_target_index(cfg: dict) -> int | None:
             raise ValueError("target.mode='single' requires target.index")
         return int(target_cfg["index"])
 
+    if mode == "multi":
+        if "indices" not in target_cfg:
+            raise ValueError("target.mode='multi' requires target.indices")
+        return [int(i) for i in target_cfg["indices"]]
+
     raise ValueError(f"Unknown target mode: {mode}")
 
 
-def select_target_if_needed(tensor, target_index: int | None):
+def select_target_if_needed(tensor, target_index):
     if target_index is None:
         return tensor
-    return tensor[:, target_index:target_index + 1]
+
+    if isinstance(target_index, int):
+        return tensor[:, target_index:target_index + 1]
+
+    if isinstance(target_index, (list, tuple)):
+        idx = torch.tensor(target_index, dtype=torch.long, device=tensor.device)
+        return tensor.index_select(dim=1, index=idx)
+
+    raise TypeError(f"Unsupported target_index type: {type(target_index)}")
 
 
-def primary_mae_for_target(norm_mae, target_index: int | None) -> float:
+def primary_mae_for_target(norm_mae, target_index) -> float:
     if target_index is None:
         return float(norm_mae.mean())
-    return float(norm_mae[target_index])
+
+    if isinstance(target_index, int):
+        return float(norm_mae[target_index])
+
+    if isinstance(target_index, (list, tuple)):
+        idx = torch.tensor(target_index, dtype=torch.long, device=norm_mae.device)
+        return float(norm_mae.index_select(dim=0, index=idx).mean())
+
+    raise TypeError(f"Unsupported target_index type: {type(target_index)}")
 
 
 
@@ -364,7 +391,7 @@ def run_training(
         "best_val_mean_raw_mae": float(best_raw_mae.mean()),
         "target_mode": cfg.get("target", {}).get("mode", "all"),
         "target_name": cfg.get("target", {}).get("name", None),
-        "target_index": target_index,
+        "target_index": target_index if not isinstance(target_index, tuple) else list(target_index),
     }
 
     if extra_metadata:
