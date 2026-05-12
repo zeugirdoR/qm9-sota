@@ -4,7 +4,6 @@ import math
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from qm9sota.geometry.info_volume import (
     local_edge_volume_features,
@@ -40,9 +39,7 @@ class AttentiveGraphToken(nn.Module):
     """
     Learned graph-level attention pooling.
 
-    Produces a global electronic context vector from node embeddings.
-    This is an invariant graph token because attention is over nodes and
-    does not depend on absolute orientation.
+    Produces an invariant graph context vector from node embeddings.
     """
 
     def __init__(self, hidden_dim: int):
@@ -61,7 +58,6 @@ class AttentiveGraphToken(nn.Module):
         )
 
     def forward(self, h: torch.Tensor, batch: torch.Tensor) -> torch.Tensor:
-        # h: [N, H], batch: [N]
         num_graphs = int(batch.max().item()) + 1 if batch.numel() > 0 else 0
 
         score = self.score(h).squeeze(-1)
@@ -81,6 +77,56 @@ class AttentiveGraphToken(nn.Module):
         out = h.new_zeros(num_graphs, h.shape[-1])
         out.index_add_(0, batch, weighted)
         return out
+
+
+class GlobalFeedbackBlock(nn.Module):
+    """
+    E2 read-write global electronic token.
+
+    Step 1:
+      global token reads all node embeddings.
+
+    Step 2:
+      each node receives node-specific feedback from the global token.
+
+    This is still permutation-invariant/equivariant at the graph level:
+      - global token is pooled over nodes
+      - feedback to node i depends on h_i and graph context
+      - scalar prediction remains invariant after graph pooling
+    """
+
+    def __init__(self, hidden_dim: int, feedback_scale: float = 1.0):
+        super().__init__()
+        self.token = AttentiveGraphToken(hidden_dim)
+        self.feedback_scale = float(feedback_scale)
+
+        self.gate = nn.Sequential(
+            nn.LayerNorm(2 * hidden_dim),
+            nn.Linear(2 * hidden_dim, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.Sigmoid(),
+        )
+
+        self.update = nn.Sequential(
+            nn.LayerNorm(2 * hidden_dim),
+            nn.Linear(2 * hidden_dim, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+        )
+
+        self.norm = nn.LayerNorm(hidden_dim)
+
+    def forward(self, h: torch.Tensor, batch: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        global_h = self.token(h, batch)
+        global_per_node = global_h[batch]
+
+        joint = torch.cat([h, global_per_node], dim=-1)
+        gate = self.gate(joint)
+        update = self.update(joint)
+
+        h_new = self.norm(h + self.feedback_scale * gate * update)
+        return h_new, global_h
 
 
 class FamilyHeads(nn.Module):
@@ -136,10 +182,15 @@ class PGAMultivectorTransformer(nn.Module):
       single prediction head
 
     E1:
-      optional global electronic token / attentive graph context
-      used by concatenating [mean_pool, global_context] before the head
+      read-only global electronic token
 
-    Optional diagnostic modes:
+    E2:
+      read-write global token:
+        token reads nodes
+        token writes node-specific feedback back into nodes
+        graph embedding uses updated nodes + token
+
+    Diagnostic options:
       family heads
       scheduled Cauchy-Binet bias
     """
@@ -158,6 +209,9 @@ class PGAMultivectorTransformer(nn.Module):
         vector_channels: int = 8,
         head_mode: str = "single",
         use_global_token: bool = False,
+        global_feedback: bool = False,
+        global_feedback_layers: int = 1,
+        global_feedback_scale: float = 1.0,
         use_cb_bias: bool = False,
         cb_lambda_end: float = 0.10,
         cb_warmup_epochs: float = 3.0,
@@ -173,6 +227,7 @@ class PGAMultivectorTransformer(nn.Module):
         self.vector_channels = vector_channels
         self.head_mode = head_mode
         self.use_global_token = use_global_token
+        self.global_feedback = global_feedback
 
         self.use_cb_bias = use_cb_bias
         self.cb_lambda_end = cb_lambda_end
@@ -225,24 +280,47 @@ class PGAMultivectorTransformer(nn.Module):
         else:
             raise ValueError(f"Unknown attention_mode: {attention_mode}")
 
-        if use_global_token:
-            self.global_token = AttentiveGraphToken(hidden_dim)
-            head_input_dim = 2 * hidden_dim
+        if global_feedback:
+            self.feedback_blocks = nn.ModuleList(
+                [
+                    GlobalFeedbackBlock(
+                        hidden_dim=hidden_dim,
+                        feedback_scale=global_feedback_scale,
+                    )
+                    for _ in range(int(global_feedback_layers))
+                ]
+            )
+            self.global_token = None
+            graph_context_dim = 2 * hidden_dim
             self.graph_fuse = nn.Sequential(
-                nn.LayerNorm(head_input_dim),
-                nn.Linear(head_input_dim, hidden_dim),
+                nn.LayerNorm(graph_context_dim),
+                nn.Linear(graph_context_dim, hidden_dim),
                 nn.SiLU(),
                 nn.Linear(hidden_dim, hidden_dim),
             )
+
+        elif use_global_token:
+            self.global_token = AttentiveGraphToken(hidden_dim)
+            self.feedback_blocks = None
+            graph_context_dim = 2 * hidden_dim
+            self.graph_fuse = nn.Sequential(
+                nn.LayerNorm(graph_context_dim),
+                nn.Linear(graph_context_dim, hidden_dim),
+                nn.SiLU(),
+                nn.Linear(hidden_dim, hidden_dim),
+            )
+
         else:
             self.global_token = None
+            self.feedback_blocks = None
             self.graph_fuse = None
-            head_input_dim = hidden_dim
+
+        head_dim = hidden_dim
 
         if head_mode == "single":
-            self.head = make_head(head_input_dim if not use_global_token else hidden_dim, out_dim)
+            self.head = make_head(head_dim, out_dim)
         elif head_mode == "family":
-            self.head = FamilyHeads(hidden_dim=head_input_dim if not use_global_token else hidden_dim, out_dim=out_dim)
+            self.head = FamilyHeads(hidden_dim=head_dim, out_dim=out_dim)
         else:
             raise ValueError(f"Unknown head_mode: {head_mode}")
 
@@ -316,6 +394,16 @@ class PGAMultivectorTransformer(nn.Module):
 
     def encode_graph(self, data):
         h = self.encode_nodes(data)
+
+        if self.global_feedback:
+            last_global = None
+            for block in self.feedback_blocks:
+                h, last_global = block(h, data.batch)
+
+            mean_h = mean_pool(h, data.batch)
+            graph_h = self.graph_fuse(torch.cat([mean_h, last_global], dim=-1))
+            return h, graph_h
+
         mean_h = mean_pool(h, data.batch)
 
         if self.use_global_token:
@@ -356,6 +444,9 @@ def build_pga_transformer(cfg: dict) -> PGAMultivectorTransformer:
         vector_channels=int(model_cfg.get("vector_channels", 8)),
         head_mode=str(model_cfg.get("head_mode", "single")),
         use_global_token=bool(model_cfg.get("use_global_token", False)),
+        global_feedback=bool(model_cfg.get("global_feedback", False)),
+        global_feedback_layers=int(model_cfg.get("global_feedback_layers", 1)),
+        global_feedback_scale=float(model_cfg.get("global_feedback_scale", 1.0)),
         use_cb_bias=bool(model_cfg.get("use_cb_bias", False)),
         cb_lambda_end=float(model_cfg.get("cb_lambda_end", 0.10)),
         cb_warmup_epochs=float(model_cfg.get("cb_warmup_epochs", 3.0)),
