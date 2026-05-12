@@ -16,27 +16,34 @@ class MVEdgeAttentionConfig:
     hidden_dim: int = 128
     vector_channels: int = 8
     dropout: float = 0.0
+
     cb_dim: int = 32
     use_cb_bias: bool = False
+
+    # Scheduled motor residual path.
+    use_motor: bool = False
+    motor_hidden_dim: int = 128
 
 
 class MultivectorEdgeAttention(nn.Module):
     """
     Edge-restricted scalar + vector multivector attention.
 
-    Main path is the validated M4 pathway:
+    Main validated M4 path:
       - scalar q/k edge attention
       - radial edge features
       - MPNN-style scalar message
       - equivariant vector message from learned gates times edge directions
       - invariant vector magnitudes fed back into scalar state
 
-    Optional M6b path:
-      - Cauchy-Binet / local Gram-volume features enter only as a scheduled
-        additive attention bias:
-            score += lambda_cb * cb_bias(cb_features)
+    Optional scheduled Cauchy-Binet path:
+      score += lambda_cb * cb_bias(cb_features)
 
-    This keeps the strong M4 path intact and introduces CB information gently.
+    Optional scheduled Motor path:
+      vector_msg += lambda_motor * motor_vector_msg
+
+    The motor residual is deliberately off at the beginning of training and
+    enters only through lambda_motor supplied by the model schedule.
     """
 
     def __init__(self, cfg: MVEdgeAttentionConfig):
@@ -86,6 +93,29 @@ class MultivectorEdgeAttention(nn.Module):
         else:
             self.cb_bias = None
 
+        if cfg.use_motor:
+            mh = cfg.motor_hidden_dim
+
+            # Motor-inspired edge branch. It predicts:
+            #   - channel gates
+            #   - a local axis vector
+            #   - three mixing coefficients for direction/axis/cross components
+            self.motor_core = nn.Sequential(
+                nn.LayerNorm(2 * d + cfg.edge_dim),
+                nn.Linear(2 * d + cfg.edge_dim, mh),
+                nn.SiLU(),
+                nn.Linear(mh, mh),
+                nn.SiLU(),
+            )
+            self.motor_gate = nn.Linear(mh, cv)
+            self.motor_axis = nn.Linear(mh, 3)
+            self.motor_mix = nn.Linear(mh, 3)
+        else:
+            self.motor_core = None
+            self.motor_gate = None
+            self.motor_axis = None
+            self.motor_mix = None
+
         self.out_s = nn.Linear(h, d)
         self.norm_s = nn.LayerNorm(d)
 
@@ -100,6 +130,7 @@ class MultivectorEdgeAttention(nn.Module):
         pos: torch.Tensor,
         cb_features: torch.Tensor | None = None,
         lambda_cb: float | torch.Tensor = 0.0,
+        lambda_motor: float | torch.Tensor = 0.0,
     ) -> Multivector:
         if mv.s is None:
             raise ValueError("MultivectorEdgeAttention currently requires scalar channels mv.s")
@@ -141,13 +172,48 @@ class MultivectorEdgeAttention(nn.Module):
         scalar_agg = s.new_zeros(num_nodes, edge_s.shape[-1])
         scalar_agg.index_add_(0, dst, scalar_msg)
 
-        # Equivariant vector message pathway.
+        # Base equivariant vector message pathway.
         rel = pos[src].float() - pos[dst].float()
         rel_norm = rel.norm(dim=-1, keepdim=True).clamp_min(1e-8)
         direction = rel / rel_norm
 
         gates = self.vector_gate(edge_context)
         vector_msg = gates.unsqueeze(-1) * direction.unsqueeze(1)
+
+        # Optional scheduled motor residual.
+        if self.motor_core is not None:
+            if not torch.is_tensor(lambda_motor):
+                lambda_motor_t = vector_msg.new_tensor(float(lambda_motor))
+            else:
+                lambda_motor_t = lambda_motor.to(dtype=vector_msg.dtype, device=vector_msg.device)
+
+            if float(lambda_motor_t.detach().cpu()) != 0.0:
+                motor_h = self.motor_core(edge_context)
+
+                motor_gate = torch.sigmoid(self.motor_gate(motor_h))  # [E, Cv]
+
+                axis = self.motor_axis(motor_h)
+                axis = axis / axis.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+
+                # Remove the component of axis parallel to direction, giving a local perpendicular axis.
+                axis_perp = axis - (axis * direction).sum(dim=-1, keepdim=True) * direction
+                axis_perp = axis_perp / axis_perp.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+
+                cross = torch.cross(direction, axis_perp, dim=-1)
+                cross = cross / cross.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+
+                mix = torch.tanh(self.motor_mix(motor_h))  # [E, 3]
+
+                motor_dir = (
+                    mix[:, 0:1] * direction
+                    + mix[:, 1:2] * axis_perp
+                    + mix[:, 2:3] * cross
+                )
+                motor_dir = motor_dir / motor_dir.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+
+                motor_msg = motor_gate.unsqueeze(-1) * motor_dir.unsqueeze(1)
+                vector_msg = vector_msg + lambda_motor_t * motor_msg
+
         vector_msg = vector_msg * attn.view(-1, 1, 1)
 
         cv = gates.shape[-1]

@@ -212,6 +212,10 @@ class PGAMultivectorTransformer(nn.Module):
         global_feedback: bool = False,
         global_feedback_layers: int = 1,
         global_feedback_scale: float = 1.0,
+        use_motor: bool = False,
+        motor_lambda_end: float = 0.10,
+        motor_warmup_epochs: float = 15.0,
+        motor_ramp_epochs: float = 25.0,
         use_cb_bias: bool = False,
         cb_lambda_end: float = 0.10,
         cb_warmup_epochs: float = 3.0,
@@ -228,6 +232,11 @@ class PGAMultivectorTransformer(nn.Module):
         self.head_mode = head_mode
         self.use_global_token = use_global_token
         self.global_feedback = global_feedback
+
+        self.use_motor = use_motor
+        self.motor_lambda_end = motor_lambda_end
+        self.motor_warmup_epochs = motor_warmup_epochs
+        self.motor_ramp_epochs = motor_ramp_epochs
 
         self.use_cb_bias = use_cb_bias
         self.cb_lambda_end = cb_lambda_end
@@ -271,6 +280,7 @@ class PGAMultivectorTransformer(nn.Module):
                             dropout=dropout,
                             cb_dim=32,
                             use_cb_bias=use_cb_bias,
+                            use_motor=use_motor,
                         )
                     )
                     for _ in range(num_layers)
@@ -338,6 +348,17 @@ class PGAMultivectorTransformer(nn.Module):
             lambda_end=self.cb_lambda_end,
         )
 
+    def motor_lambda(self) -> float:
+        if not self.use_motor:
+            return 0.0
+
+        return scheduled_lambda(
+            self.current_epoch_float,
+            warmup_epochs=self.motor_warmup_epochs,
+            ramp_epochs=self.motor_ramp_epochs,
+            lambda_end=self.motor_lambda_end,
+        )
+
     def _edge_features(self, data) -> torch.Tensor:
         pos = data.pos.float()
         edge_index = data.edge_index
@@ -377,6 +398,7 @@ class PGAMultivectorTransformer(nn.Module):
             edge_features = self._edge_features(data)
             cb_features = self._cb_features(data)
             lambda_cb = self.cb_lambda()
+            lambda_motor = self.motor_lambda()
 
             for layer in self.layers:
                 mv = layer(
@@ -386,6 +408,7 @@ class PGAMultivectorTransformer(nn.Module):
                     pos=data.pos.float(),
                     cb_features=cb_features,
                     lambda_cb=lambda_cb,
+                    lambda_motor=lambda_motor,
                 )
 
             return mv.s
@@ -447,6 +470,10 @@ def build_pga_transformer(cfg: dict) -> PGAMultivectorTransformer:
         global_feedback=bool(model_cfg.get("global_feedback", False)),
         global_feedback_layers=int(model_cfg.get("global_feedback_layers", 1)),
         global_feedback_scale=float(model_cfg.get("global_feedback_scale", 1.0)),
+        use_motor=bool(model_cfg.get("use_motor", False)),
+        motor_lambda_end=float(model_cfg.get("motor_lambda_end", 0.10)),
+        motor_warmup_epochs=float(model_cfg.get("motor_warmup_epochs", 15.0)),
+        motor_ramp_epochs=float(model_cfg.get("motor_ramp_epochs", 25.0)),
         use_cb_bias=bool(model_cfg.get("use_cb_bias", False)),
         cb_lambda_end=float(model_cfg.get("cb_lambda_end", 0.10)),
         cb_warmup_epochs=float(model_cfg.get("cb_warmup_epochs", 3.0)),
