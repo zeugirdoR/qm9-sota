@@ -172,6 +172,7 @@ def make_scheduler(optimizer, cfg: dict):
         raise ValueError(f"Unknown scheduler: {name}")
 
     epochs = int(cfg["train"].get("epochs", 5))
+    checkpoint_every = int(cfg["train"].get("checkpoint_every", 0))
     warmup_epochs = float(sched_cfg.get("warmup_epochs", 5.0))
     min_lr_ratio = float(sched_cfg.get("min_lr_ratio", 0.03))
 
@@ -295,6 +296,61 @@ def train_one_epoch(
     return total_loss / max(total_graphs, 1), global_step, avg_stats
 
 
+
+def save_training_checkpoint(
+    *,
+    path,
+    model,
+    optimizer,
+    scheduler,
+    epoch,
+    global_step,
+    best_epoch,
+    best_norm,
+    best_raw_mae,
+    best_norm_mae,
+):
+    payload = {
+        "epoch": int(epoch),
+        "global_step": int(global_step),
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "scheduler_state_dict": None if scheduler is None else scheduler.state_dict(),
+        "best_epoch": None if best_epoch is None else int(best_epoch),
+        "best_norm": None if best_norm is None else float(best_norm),
+        "best_raw_mae": best_raw_mae.detach().cpu() if best_raw_mae is not None else None,
+        "best_norm_mae": best_norm_mae.detach().cpu() if best_norm_mae is not None else None,
+    }
+    torch.save(payload, path)
+
+
+def load_training_checkpoint(
+    *,
+    path,
+    model,
+    optimizer,
+    scheduler,
+    device,
+):
+    ckpt = torch.load(path, map_location=device)
+    model.load_state_dict(ckpt["model_state_dict"])
+
+    if ckpt.get("optimizer_state_dict") is not None:
+        optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+
+    if scheduler is not None and ckpt.get("scheduler_state_dict") is not None:
+        scheduler.load_state_dict(ckpt["scheduler_state_dict"])
+
+    return {
+        "epoch": int(ckpt.get("epoch", 0)),
+        "global_step": int(ckpt.get("global_step", 0)),
+        "best_epoch": ckpt.get("best_epoch", None),
+        "best_norm": ckpt.get("best_norm", None),
+        "best_raw_mae": ckpt.get("best_raw_mae", None),
+        "best_norm_mae": ckpt.get("best_norm_mae", None),
+    }
+
+
 def run_training(
     *,
     cfg: dict[str, Any],
@@ -306,6 +362,7 @@ def run_training(
     output_root: Path,
     config_paths: dict[str, str],
     extra_metadata: dict[str, Any] | None = None,
+    resume_path=None,
 ):
     target_mean = bundle.target_mean.to(device)
     target_std = bundle.target_std.to(device)
@@ -369,6 +426,7 @@ def run_training(
     scheduler = make_scheduler(optimizer, cfg)
     grad_clip = float(cfg["optimizer"].get("grad_clip", 5.0))
     epochs = int(cfg["train"].get("epochs", 5))
+    checkpoint_every = int(cfg["train"].get("checkpoint_every", 0))
     target_index = get_target_index(cfg)
 
     run_dir = output_root / run_name
@@ -395,8 +453,45 @@ def run_training(
     best_raw_mae = None
     best_norm_mae = None
     best_state = None
+    rows = []
+    start_epoch = 1
 
-    for epoch in range(1, epochs + 1):
+    if resume_path is not None:
+        resume_path = Path(resume_path)
+        if not resume_path.exists():
+            raise FileNotFoundError(f"Resume checkpoint not found: {resume_path}")
+
+        resume_state = load_training_checkpoint(
+            path=resume_path,
+            model=model,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            device=device,
+        )
+
+        last_epoch = int(resume_state["epoch"])
+        global_step = int(resume_state["global_step"])
+        best_epoch = resume_state["best_epoch"]
+        best_norm = float("inf") if resume_state["best_norm"] is None else float(resume_state["best_norm"])
+
+        best_raw_mae = resume_state["best_raw_mae"]
+        if best_raw_mae is not None:
+            best_raw_mae = best_raw_mae.to(device)
+
+        best_norm_mae = resume_state["best_norm_mae"]
+        if best_norm_mae is not None:
+            best_norm_mae = best_norm_mae.to(device)
+
+        start_epoch = last_epoch + 1
+        print({
+            "resumed_from": str(resume_path),
+            "start_epoch": start_epoch,
+            "global_step": global_step,
+            "best_epoch": best_epoch,
+            "best_norm": best_norm,
+        })
+
+    for epoch in range(start_epoch, epochs + 1):
         jepa_ctx = None
         if jepa_loss_mod is not None:
             jepa_ctx = {
@@ -445,6 +540,36 @@ def run_training(
 
         pd.DataFrame(logs).to_csv(run_dir / "epoch_log.csv", index=False)
 
+        if checkpoint_every > 0 and (epoch % checkpoint_every == 0 or epoch == epochs):
+            ckpt_path = run_dir / f"checkpoint_epoch_{epoch:03d}.pt"
+            latest_path = run_dir / "latest_checkpoint.pt"
+
+            save_training_checkpoint(
+                path=ckpt_path,
+                model=model,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                epoch=epoch,
+                global_step=global_step,
+                best_epoch=best_epoch,
+                best_norm=best_norm,
+                best_raw_mae=best_raw_mae,
+                best_norm_mae=best_norm_mae,
+            )
+
+            save_training_checkpoint(
+                path=latest_path,
+                model=model,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                epoch=epoch,
+                global_step=global_step,
+                best_epoch=best_epoch,
+                best_norm=best_norm,
+                best_raw_mae=best_raw_mae,
+                best_norm_mae=best_norm_mae,
+            )
+
     if best_state is not None:
         torch.save(best_state, run_dir / "best_model.pt")
 
@@ -484,4 +609,15 @@ def run_training(
     with (run_dir / "summary.json").open("w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
     print(summary)
+
+    # Optional local hard-exit after final summary is printed.
+    # Useful for local Linux/PyG/CUDA environments that hang during shutdown.
+    import os
+    import sys
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+
+    if os.environ.get("QM9_FORCE_EXIT", "0") == "1":
+        os._exit(0)
     return summary

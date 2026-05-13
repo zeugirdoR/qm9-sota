@@ -42,6 +42,7 @@ def main() -> None:
     parser.add_argument("--loss", required=True, help="Path to loss config YAML")
     parser.add_argument("--run-name", required=True, help="Name for result directory")
     parser.add_argument("--seed", type=int, default=None, help="Optional seed override")
+    parser.add_argument("--resume", type=str, default=None, help="Optional checkpoint path to resume from")
     args = parser.parse_args()
 
     config_path = resolve_path(args.config)
@@ -96,8 +97,21 @@ def main() -> None:
             "git_commit": git_commit,
             "runtime": runtime,
         },
+        resume_path=Path(args.resume) if args.resume else None,
     )
 
 
 if __name__ == "__main__":
     main()
+
+    # Some local Linux/PyG/CUDA environments can hang during Python shutdown
+    # after all results have already been written. Enable this for local smoke
+    # tests with: QM9_FORCE_EXIT=1 python scripts/train.py ...
+    import os
+    import sys
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+
+    if os.environ.get("QM9_FORCE_EXIT", "0") == "1":
+        os._exit(0)
