@@ -35,6 +35,77 @@ def make_optimizer(model, loss_fn, cfg: dict, jepa_loss=None):
 
 
 
+
+TARGET_UNIT_INFO = {
+    "mu": {"index": 0, "unit": "D", "conversion": 1.0},
+    "alpha": {"index": 1, "unit": "a0^3", "conversion": 1.0},
+    "homo": {"index": 2, "unit": "meV", "conversion": 1000.0},
+    "lumo": {"index": 3, "unit": "meV", "conversion": 1000.0},
+    "gap": {"index": 4, "unit": "meV", "conversion": 1000.0},
+    "r2": {"index": 5, "unit": "a0^2", "conversion": 1.0},
+    "zpve": {"index": 6, "unit": "meV", "conversion": 1000.0},
+    "U0": {"index": 7, "unit": "meV_total", "conversion": 1000.0},
+    "U": {"index": 8, "unit": "meV_total", "conversion": 1000.0},
+    "H": {"index": 9, "unit": "meV_total", "conversion": 1000.0},
+    "G": {"index": 10, "unit": "meV_total", "conversion": 1000.0},
+    "Cv": {"index": 11, "unit": "cal/mol/K", "conversion": 1.0},
+    "U0_atom": {"index": 12, "unit": "meV", "conversion": 1000.0},
+    "U_atom": {"index": 13, "unit": "meV", "conversion": 1000.0},
+    "H_atom": {"index": 14, "unit": "meV", "conversion": 1000.0},
+    "G_atom": {"index": 15, "unit": "meV", "conversion": 1000.0},
+    "A": {"index": 16, "unit": "GHz", "conversion": 1.0},
+    "B": {"index": 17, "unit": "GHz", "conversion": 1.0},
+    "C": {"index": 18, "unit": "GHz", "conversion": 1.0},
+}
+
+
+def target_unit_info_from_cfg(cfg: dict):
+    target_cfg = cfg.get("target", {})
+    name = target_cfg.get("name", None)
+
+    if name in TARGET_UNIT_INFO:
+        return TARGET_UNIT_INFO[name]
+
+    idx = target_cfg.get("index", None)
+    if idx is not None:
+        idx = int(idx)
+        for info in TARGET_UNIT_INFO.values():
+            if int(info["index"]) == idx:
+                return info
+
+    return None
+
+
+def target_summary_metrics(raw_mae, norm_mae, cfg: dict, target_index):
+    """
+    Returns target-specific metrics for single-target runs.
+
+    raw_mae and norm_mae are vectors of length 19.
+    """
+    if not isinstance(target_index, int):
+        return {}
+
+    info = target_unit_info_from_cfg(cfg)
+    if info is None:
+        conversion = 1.0
+        unit = None
+    else:
+        conversion = float(info["conversion"])
+        unit = info["unit"]
+
+    raw = float(raw_mae[target_index])
+    norm = float(norm_mae[target_index])
+    converted = raw * conversion
+
+    return {
+        "best_val_target_norm_mae": norm,
+        "best_val_target_raw_mae": raw,
+        "best_val_target_unit": unit,
+        "best_val_target_conversion": conversion,
+        "best_val_target_converted_mae": converted,
+    }
+
+
 def get_target_index(cfg: dict):
     """
     Returns:
@@ -393,6 +464,15 @@ def run_training(
         "target_name": cfg.get("target", {}).get("name", None),
         "target_index": target_index if not isinstance(target_index, tuple) else list(target_index),
     }
+
+    summary.update(
+        target_summary_metrics(
+            raw_mae=best_raw_mae,
+            norm_mae=best_norm_mae,
+            cfg=cfg,
+            target_index=target_index,
+        )
+    )
 
     if extra_metadata:
         summary.update(
