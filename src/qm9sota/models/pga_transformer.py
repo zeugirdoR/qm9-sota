@@ -27,12 +27,40 @@ GEOM_THERMAL_IDX = [5, 6, 11, 16, 17, 18]
 ENERGY_IDX = [7, 8, 9, 10, 12, 13, 14, 15]
 
 
-def make_head(hidden_dim: int, out_dim: int) -> nn.Sequential:
-    return nn.Sequential(
-        nn.Linear(hidden_dim, hidden_dim),
-        nn.SiLU(),
-        nn.Linear(hidden_dim, out_dim),
-    )
+def make_head(
+    hidden_dim: int,
+    out_dim: int,
+    *,
+    head_hidden_dim: int | None = None,
+    head_depth: int = 1,
+) -> nn.Sequential:
+    """
+    Configurable MLP prediction head.
+
+    head_depth counts hidden Linear+SiLU blocks before the final output layer.
+
+    Original M4 behavior:
+      head_hidden_dim = hidden_dim
+      head_depth = 1
+
+    Example larger head:
+      hidden_dim = 128
+      head_hidden_dim = 256
+      head_depth = 2
+    """
+    h = int(head_hidden_dim or hidden_dim)
+    depth = int(head_depth)
+
+    layers = []
+    in_dim = hidden_dim
+
+    for _ in range(max(depth, 1)):
+        layers.append(nn.Linear(in_dim, h))
+        layers.append(nn.SiLU())
+        in_dim = h
+
+    layers.append(nn.Linear(in_dim, out_dim))
+    return nn.Sequential(*layers)
 
 
 class AttentiveGraphToken(nn.Module):
@@ -208,6 +236,8 @@ class PGAMultivectorTransformer(nn.Module):
         cutoff: float = 8.0,
         vector_channels: int = 8,
         head_mode: str = "single",
+        head_hidden_dim: int | None = None,
+        head_depth: int = 1,
         use_global_token: bool = False,
         global_feedback: bool = False,
         global_feedback_layers: int = 1,
@@ -230,6 +260,8 @@ class PGAMultivectorTransformer(nn.Module):
         self.cutoff = cutoff
         self.vector_channels = vector_channels
         self.head_mode = head_mode
+        self.head_hidden_dim = head_hidden_dim
+        self.head_depth = head_depth
         self.use_global_token = use_global_token
         self.global_feedback = global_feedback
 
@@ -328,7 +360,12 @@ class PGAMultivectorTransformer(nn.Module):
         head_dim = hidden_dim
 
         if head_mode == "single":
-            self.head = make_head(head_dim, out_dim)
+            self.head = make_head(
+                head_dim,
+                out_dim,
+                head_hidden_dim=head_hidden_dim,
+                head_depth=head_depth,
+            )
         elif head_mode == "family":
             self.head = FamilyHeads(hidden_dim=head_dim, out_dim=out_dim)
         else:
@@ -466,6 +503,12 @@ def build_pga_transformer(cfg: dict) -> PGAMultivectorTransformer:
         cutoff=float(model_cfg.get("cutoff", 8.0)),
         vector_channels=int(model_cfg.get("vector_channels", 8)),
         head_mode=str(model_cfg.get("head_mode", "single")),
+        head_hidden_dim=(
+            None
+            if model_cfg.get("head_hidden_dim", None) is None
+            else int(model_cfg.get("head_hidden_dim"))
+        ),
+        head_depth=int(model_cfg.get("head_depth", 1)),
         use_global_token=bool(model_cfg.get("use_global_token", False)),
         global_feedback=bool(model_cfg.get("global_feedback", False)),
         global_feedback_layers=int(model_cfg.get("global_feedback_layers", 1)),
