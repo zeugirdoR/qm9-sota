@@ -10,3 +10,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
+results_local/
+qm9-sota-local-results/
+*.pt
+checkpoint_epoch_*.pt
+latest_checkpoint.pt
+best_model.pt
+.ipynb_checkpoints/
