@@ -20,6 +20,8 @@ from qm9sota.models.multivector.edge_attention import (
     MVEdgeAttentionConfig,
 )
 from qm9sota.models.tiny_radial_mpnn import mean_pool
+from qm9sota.geometry.cga_features import graph_cga_summary
+from qm9sota.geometry.cb_features import graph_cb_summary
 
 
 ELECTRONIC_IDX = [0, 1, 2, 3, 4]
@@ -242,6 +244,15 @@ class PGAMultivectorTransformer(nn.Module):
         global_feedback: bool = False,
         global_feedback_layers: int = 1,
         global_feedback_scale: float = 1.0,
+        use_cga_readout: bool = False,
+        use_cga_residual_head: bool = False,
+        cga_k: int = 4,
+        cga_hidden_dim: int = 64,
+        cga_gate_init: float = -10.0,
+        use_cb_residual_head: bool = False,
+        cb_k: int = 4,
+        cb_hidden_dim: int = 64,
+        cb_gate_init: float = -10.0,
         use_motor: bool = False,
         motor_lambda_end: float = 0.10,
         motor_warmup_epochs: float = 15.0,
@@ -264,6 +275,15 @@ class PGAMultivectorTransformer(nn.Module):
         self.head_depth = head_depth
         self.use_global_token = use_global_token
         self.global_feedback = global_feedback
+        self.use_cga_residual_head = bool(use_cga_residual_head)
+        self.cga_k = int(cga_k)
+        self.cga_hidden_dim = int(cga_hidden_dim)
+        self.cga_gate_init = float(cga_gate_init)
+        self.use_cb_residual_head = bool(use_cb_residual_head)
+        self.cb_k = int(cb_k)
+        self.cb_hidden_dim = int(cb_hidden_dim)
+        self.cb_gate_init = float(cb_gate_init)
+        self.use_cga_readout = bool(use_cga_readout)
 
         self.use_motor = use_motor
         self.motor_lambda_end = motor_lambda_end
@@ -358,6 +378,53 @@ class PGAMultivectorTransformer(nn.Module):
             self.graph_fuse = None
 
         head_dim = hidden_dim
+
+        if self.use_cga_readout:
+            self.cga_readout = nn.Sequential(
+                nn.LayerNorm(6),
+                nn.Linear(6, self.cga_hidden_dim),
+                nn.SiLU(),
+                nn.Linear(self.cga_hidden_dim, head_dim),
+            )
+            self.cga_gate_logit = nn.Parameter(
+                torch.tensor(float(self.cga_gate_init))
+            )
+        else:
+            self.cga_readout = None
+            self.cga_gate_logit = None
+
+        if self.use_cga_residual_head:
+            self.cga_residual_head = nn.Sequential(
+                nn.LayerNorm(6),
+                nn.Linear(6, self.cga_hidden_dim),
+                nn.SiLU(),
+                nn.Linear(self.cga_hidden_dim, out_dim),
+            )
+            # Start as an exact no-op: residual output is initially zero.
+            nn.init.zeros_(self.cga_residual_head[-1].weight)
+            nn.init.zeros_(self.cga_residual_head[-1].bias)
+            self.cga_gate_logit = nn.Parameter(
+                torch.tensor(float(self.cga_gate_init))
+            )
+        else:
+            self.cga_residual_head = None
+            self.cga_gate_logit = None
+
+        if self.use_cb_residual_head:
+            self.cb_residual_head = nn.Sequential(
+                nn.LayerNorm(16),
+                nn.Linear(16, self.cb_hidden_dim),
+                nn.SiLU(),
+                nn.Linear(self.cb_hidden_dim, out_dim),
+            )
+            nn.init.zeros_(self.cb_residual_head[-1].weight)
+            nn.init.zeros_(self.cb_residual_head[-1].bias)
+            self.cb_gate_logit = nn.Parameter(
+                torch.tensor(float(self.cb_gate_init))
+            )
+        else:
+            self.cb_residual_head = None
+            self.cb_gate_logit = None
 
         if head_mode == "single":
             self.head = make_head(
@@ -476,7 +543,25 @@ class PGAMultivectorTransformer(nn.Module):
 
     def forward(self, data, return_embeddings: bool = False):
         h, graph_h = self.encode_graph(data)
+        if self.use_cga_readout:
+            cga_feat = graph_cga_summary(data.pos, data.batch, k=self.cga_k)
+            cga_h = self.cga_readout(cga_feat.to(graph_h.dtype))
+            cga_gate = torch.sigmoid(self.cga_gate_logit)
+            graph_h = graph_h + cga_gate * cga_h
+
         pred_norm = self.head(graph_h)
+
+        if self.use_cga_residual_head:
+            cga_feat = graph_cga_summary(data.pos, data.batch, k=self.cga_k)
+            cga_residual = self.cga_residual_head(cga_feat.to(graph_h.dtype))
+            cga_gate = torch.sigmoid(self.cga_gate_logit)
+            pred_norm = pred_norm + cga_gate * cga_residual
+
+        if self.use_cb_residual_head:
+            cb_feat = graph_cb_summary(data.pos, data.batch, k=self.cb_k)
+            cb_residual = self.cb_residual_head(cb_feat.to(graph_h.dtype))
+            cb_gate = torch.sigmoid(self.cb_gate_logit)
+            pred_norm = pred_norm + cb_gate * cb_residual
 
         if return_embeddings:
             return {
@@ -513,6 +598,15 @@ def build_pga_transformer(cfg: dict) -> PGAMultivectorTransformer:
         global_feedback=bool(model_cfg.get("global_feedback", False)),
         global_feedback_layers=int(model_cfg.get("global_feedback_layers", 1)),
         global_feedback_scale=float(model_cfg.get("global_feedback_scale", 1.0)),
+        use_cga_readout=bool(model_cfg.get("use_cga_readout", False)),
+        use_cga_residual_head=bool(model_cfg.get("use_cga_residual_head", False)),
+        cga_k=int(model_cfg.get("cga_k", 4)),
+        cga_hidden_dim=int(model_cfg.get("cga_hidden_dim", 64)),
+        cga_gate_init=float(model_cfg.get("cga_gate_init", -10.0)),
+        use_cb_residual_head=bool(model_cfg.get("use_cb_residual_head", False)),
+        cb_k=int(model_cfg.get("cb_k", 4)),
+        cb_hidden_dim=int(model_cfg.get("cb_hidden_dim", 64)),
+        cb_gate_init=float(model_cfg.get("cb_gate_init", -10.0)),
         use_motor=bool(model_cfg.get("use_motor", False)),
         motor_lambda_end=float(model_cfg.get("motor_lambda_end", 0.10)),
         motor_warmup_epochs=float(model_cfg.get("motor_warmup_epochs", 15.0)),
