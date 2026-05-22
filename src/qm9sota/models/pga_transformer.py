@@ -254,9 +254,15 @@ class PGAMultivectorTransformer(nn.Module):
         cb_hidden_dim: int = 64,
         cb_gate_init: float = -10.0,
         use_motor: bool = False,
+        motor_mode: str = "vector_residual",
+        motor_score_mode: str = "mlp",
+        motor_score_heads: int = 8,
+        motor_score_dim: int = 8,
         motor_lambda_end: float = 0.10,
         motor_warmup_epochs: float = 15.0,
         motor_ramp_epochs: float = 25.0,
+        motor_aux_loss_weight: float = 0.0,
+        motor_aux_scale_by_lambda: bool = True,
         use_cb_bias: bool = False,
         cb_lambda_end: float = 0.10,
         cb_warmup_epochs: float = 3.0,
@@ -286,9 +292,15 @@ class PGAMultivectorTransformer(nn.Module):
         self.use_cga_readout = bool(use_cga_readout)
 
         self.use_motor = use_motor
+        self.motor_mode = motor_mode
+        self.motor_score_mode = motor_score_mode
+        self.motor_score_heads = int(motor_score_heads)
+        self.motor_score_dim = int(motor_score_dim)
         self.motor_lambda_end = motor_lambda_end
         self.motor_warmup_epochs = motor_warmup_epochs
         self.motor_ramp_epochs = motor_ramp_epochs
+        self.motor_aux_loss_weight = float(motor_aux_loss_weight)
+        self.motor_aux_scale_by_lambda = bool(motor_aux_scale_by_lambda)
 
         self.use_cb_bias = use_cb_bias
         self.cb_lambda_end = cb_lambda_end
@@ -333,6 +345,10 @@ class PGAMultivectorTransformer(nn.Module):
                             cb_dim=32,
                             use_cb_bias=use_cb_bias,
                             use_motor=use_motor,
+                            motor_mode=motor_mode,
+                            motor_score_mode=motor_score_mode,
+                            motor_score_heads=int(motor_score_heads),
+                            motor_score_dim=int(motor_score_dim),
                         )
                     )
                     for _ in range(num_layers)
@@ -462,6 +478,23 @@ class PGAMultivectorTransformer(nn.Module):
             ramp_epochs=self.motor_ramp_epochs,
             lambda_end=self.motor_lambda_end,
         )
+
+    def motor_aux_loss(self) -> torch.Tensor | None:
+        if not self.use_motor or self.motor_aux_loss_weight <= 0.0:
+            return None
+
+        vals = []
+        for layer in getattr(self, "layers", []):
+            aux = getattr(layer, "last_motor_aux", None)
+            if aux is not None:
+                vals.append(aux)
+
+        if not vals:
+            return None
+
+        aux = torch.stack(vals).mean()
+        scale = float(self.motor_lambda()) if self.motor_aux_scale_by_lambda else 1.0
+        return aux * self.motor_aux_loss_weight * scale
 
     def _edge_features(self, data) -> torch.Tensor:
         pos = data.pos.float()
@@ -608,9 +641,15 @@ def build_pga_transformer(cfg: dict) -> PGAMultivectorTransformer:
         cb_hidden_dim=int(model_cfg.get("cb_hidden_dim", 64)),
         cb_gate_init=float(model_cfg.get("cb_gate_init", -10.0)),
         use_motor=bool(model_cfg.get("use_motor", False)),
+        motor_mode=str(model_cfg.get("motor_mode", "vector_residual")),
+        motor_score_mode=str(model_cfg.get("motor_score_mode", "mlp")),
+        motor_score_heads=int(model_cfg.get("motor_score_heads", 8)),
+        motor_score_dim=int(model_cfg.get("motor_score_dim", 8)),
         motor_lambda_end=float(model_cfg.get("motor_lambda_end", 0.10)),
         motor_warmup_epochs=float(model_cfg.get("motor_warmup_epochs", 15.0)),
         motor_ramp_epochs=float(model_cfg.get("motor_ramp_epochs", 25.0)),
+        motor_aux_loss_weight=float(model_cfg.get("motor_aux_loss_weight", 0.0)),
+        motor_aux_scale_by_lambda=bool(model_cfg.get("motor_aux_scale_by_lambda", True)),
         use_cb_bias=bool(model_cfg.get("use_cb_bias", False)),
         cb_lambda_end=float(model_cfg.get("cb_lambda_end", 0.10)),
         cb_warmup_epochs=float(model_cfg.get("cb_warmup_epochs", 3.0)),

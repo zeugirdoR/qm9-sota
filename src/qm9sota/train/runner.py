@@ -272,6 +272,11 @@ def train_one_epoch(
         else:
             total_step_loss = sup_loss
 
+        if hasattr(model, "motor_aux_loss"):
+            motor_aux_loss = model.motor_aux_loss()
+            if motor_aux_loss is not None:
+                total_step_loss = total_step_loss + motor_aux_loss
+
         total_step_loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
         optimizer.step()
