@@ -103,3 +103,26 @@ Promote motor-v9 full-data batch256 line for seed43 continuation and replication
 3. Replicate on seed42 and seed44.
 4. Consider v10 contrastive negatives after locking v9.
 ```
+
+
+## Seed43 v9 1200 continuation
+
+Run:
+SYS76_LOCAL_M4_MOTOR_V9_CONTINUE_FULL_BATCH256_LR1P5E6_U0atom_1200epoch_seed43
+
+Result:
+best_epoch: 1200
+best_val_target_norm_mae: 0.004509382415562868
+best_val_target_converted_mae: 46.579089015722275 meV
+git_commit_recorded_by_run: 4196be6eef4448055050dffd98bd604485c06599
+
+Comparison:
+Plain M4-1100 seed43: 51.79000273346901 meV
+v9 900 seed43:        49.00261387228966 meV
+v9 1200 seed43:       46.579089015722275 meV
+
+delta vs plain1100: -5.210913717746735 meV
+delta vs v9 900:    -2.423524856567383 meV
+
+Decision:
+Continue seed43 v9 to 1500. Do not test yet because best_epoch is endpoint.
