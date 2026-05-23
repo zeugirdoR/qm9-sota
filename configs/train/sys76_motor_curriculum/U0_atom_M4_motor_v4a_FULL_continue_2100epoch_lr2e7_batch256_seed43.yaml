@@ -1,0 +1,50 @@
+data:
+  batch_size: 256
+  num_workers: 0
+  root: /home/crod569/data/QM9
+  smoke: false
+  smoke_train_size: 50000
+  smoke_val_size: 5000
+  train_size: 110000
+  val_size: 10000
+device: cuda
+metrics:
+  primary: U0_atom_normalized_mae
+  save_per_target: true
+model:
+  attention_mode: edge
+  cutoff: 8.0
+  dropout: 0.0
+  edge_feature_mode: radial
+  head_mode: single
+  hidden_dim: 128
+  name: pga_multivector_transformer
+  node_in_dim: 11
+  num_layers: 4
+  num_rbf: 32
+  out_dim: 19
+  vector_channels: 8
+  use_motor: true
+  use_cb_bias: false
+  use_cga_readout: false
+  use_cga_residual_head: false
+  use_cb_residual_head: false
+  motor_lambda_end: 0.01
+  motor_warmup_epochs: 450.0
+  motor_ramp_epochs: 100.0
+  motor_mode: vector_residual
+optimizer:
+  grad_clip: 5.0
+  lr: 2.0e-07
+  name: adamw
+  weight_decay: 1.0e-06
+paths:
+  results_dir: /home/crod569/awsgit/qm9-sota/results_local
+seed: 43
+target:
+  index: 12
+  mode: single
+  name: U0_atom
+train:
+  checkpoint_every: 10
+  epochs: 2100
