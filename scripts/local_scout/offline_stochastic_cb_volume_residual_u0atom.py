@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import math
 import sys
@@ -369,6 +370,7 @@ def main():
         "best_val_mev": float("inf"),
         "best_delta_val_mev": None,
     }
+    best_state = None
 
     m = Xtr.shape[0]
 
@@ -400,6 +402,7 @@ def main():
                 "best_val_mev": val_mev,
                 "best_delta_val_mev": val_mev - base_val_mev,
             }
+            best_state = copy.deepcopy(net.state_dict())
 
         if epoch % 10 == 0 or epoch == 1:
             print({
@@ -409,6 +412,25 @@ def main():
                 "delta_val_mev": val_mev - base_val_mev,
                 "best": best,
             }, flush=True)
+
+    if best_state is not None:
+        net.load_state_dict(best_state)
+
+    residual_ckpt = out_dir / "best_residual_head.pt"
+    torch.save(
+        {
+            "model_state_dict": net.state_dict(),
+            "feature_mean": x_mu,
+            "feature_std": x_sd,
+            "target_mean": target_mean,
+            "target_std": target_std,
+            "target_index": TARGET_INDEX,
+            "feature_cache": str(cache_path),
+            "best": best,
+            "hidden_dim": args.hidden_dim,
+        },
+        residual_ckpt,
+    )
 
     result = {
         "target": TARGET_NAME,
@@ -427,6 +449,7 @@ def main():
         "lr": args.lr,
         "hidden_dim": args.hidden_dim,
         "weight_decay": args.weight_decay,
+        "best_residual_head": str(residual_ckpt),
     }
 
     # Optional test is for final inspection only, not tuning.

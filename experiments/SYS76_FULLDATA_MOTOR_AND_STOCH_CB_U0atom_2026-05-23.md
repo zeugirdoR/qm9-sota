@@ -64,3 +64,47 @@ Interpreted as: full-data batch256 long M4 continuation from M4-400, likely with
 Next required engineering step:
 
 Patch runner.py to call model.set_epoch_float(...) during training and to evaluate with explicit eval_epoch, then retest active motor and online CB priors.
+
+## Direct stochastic-CB residual head gated test result
+
+The direct stochastic-CB residual-head variant was rerun and then evaluated with a validation-gated test pass.
+
+Base checkpoint:
+
+- SYS76_FULL_M4_MOTOR_V4A_CONTINUE_U0atom_2400epoch_batch256_seed43
+
+Configuration:
+
+- feature cache: results_local/cache/stoch_cb_posneg_minor2_s8_seed43.pt
+- minor_k: 2
+- samples_per_center: 8
+- feature_dim: 51
+- hidden_dim: 64
+- epochs: 150
+- lr: 0.0003
+- weight_decay: 0.0001
+
+Validation result:
+
+- base_val_mev: 47.232383728027344
+- cb_val_mev: 47.146610260009766
+- delta_val_mev: -0.08577346801757812
+- best_epoch: 82
+
+Gated test result:
+
+- base_test_mev: 51.580684661865234
+- cb_test_mev: 51.50022888183594
+- delta_test_mev: -0.08045578002929688
+
+Saved residual head:
+
+- results_local/DIRECT_STOCH_CB_RESIDUAL_HEAD_U0atom_MOTOR_V4A_2400_s8_h64_seed43_TESTGATED/best_residual_head.pt
+
+Decision:
+
+Direct stochastic-CB graph-level residual correction is validated as the strongest current CB path. It improves both validation and gated test. This should be promoted to a model-integrated graph-level residual module or packaged as a post-hoc artifact.
+
+Non-claim:
+
+No SOTA claim is made here. This is a validation-gated local test result on the project split.
