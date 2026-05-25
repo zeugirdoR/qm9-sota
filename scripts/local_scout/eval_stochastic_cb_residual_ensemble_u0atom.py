@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python
 from __future__ import annotations
 
@@ -39,6 +40,11 @@ class ResidualMLP(nn.Module):
         return self.net(x).squeeze(-1)
 
 
+def resolve_path(path_text: str) -> Path:
+    p = Path(path_text)
+    return p if p.is_absolute() else ROOT / p
+
+
 def make_splits(n: int, seed: int):
     g = torch.Generator().manual_seed(seed)
     perm = torch.randperm(n, generator=g)
@@ -49,6 +55,13 @@ def make_splits(n: int, seed: int):
     }
 
 
+def parse_member(text: str):
+    parts = text.split(":", 2)
+    if len(parts) != 3:
+        raise ValueError("member must be name:head_path:feature_cache_path")
+    return parts[0], resolve_path(parts[1]), resolve_path(parts[2])
+
+
 @torch.no_grad()
 def compute_base_preds(model, dataset, indices, device, batch_size: int, target_index: int):
     subset = [dataset[int(i)] for i in indices]
@@ -56,7 +69,6 @@ def compute_base_preds(model, dataset, indices, device, batch_size: int, target_
 
     preds = []
     ys = []
-
     model.eval()
 
     for batch in loader:
@@ -78,25 +90,32 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--manifest", required=True)
     ap.add_argument("--split", choices=["val", "test"], required=True)
+    ap.add_argument("--member", action="append", required=True)
+    ap.add_argument("--weights", default=None)
+    ap.add_argument("--alpha", type=float, default=1.0)
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--pred-batch-size", type=int, default=64)
     ap.add_argument("--out", default=None)
-    ap.add_argument("--alpha", type=float, default=1.0)
-    ap.add_argument("--residual-head-override", default=None)
-    ap.add_argument("--feature-cache-override", default=None)
     args = ap.parse_args()
 
-    manifest_path = Path(args.manifest)
+    manifest_path = resolve_path(args.manifest)
     manifest = json.loads(manifest_path.read_text())
 
+    members = [parse_member(m) for m in args.member]
+    if args.weights:
+        weights = torch.tensor([float(x) for x in args.weights.split(",")], dtype=torch.float32)
+        if len(weights) != len(members):
+            raise ValueError("weights length must match member count")
+    else:
+        weights = torch.ones(len(members), dtype=torch.float32)
+    weights = weights / weights.sum()
+
     data_root = manifest.get("data_root", str(Path.home() / "data/QM9"))
-    seed = int(manifest.get("seed", 43))
+    seed = int(manifest.get("split", {}).get("seed", manifest.get("seed", 43)))
     target_index = int(manifest.get("target_index", 12))
 
-    config_path = Path(manifest["config"])
-    base_checkpoint = Path(manifest["base_checkpoint"])
-    residual_head_path = Path(args.residual_head_override) if args.residual_head_override else Path(manifest["residual_head"])
-    feature_cache_path = Path(args.feature_cache_override) if args.feature_cache_override else Path(manifest["feature_cache"])
+    config_path = resolve_path(manifest["config"])
+    base_checkpoint = resolve_path(manifest["base_checkpoint"])
 
     device = torch.device(args.device if args.device == "cpu" or torch.cuda.is_available() else "cpu")
 
@@ -110,7 +129,6 @@ def main():
     splits = make_splits(len(dataset), seed)
     idx = splits[args.split]
 
-    # Target normalization from train split, matching training/eval convention.
     y_full = torch.cat([data.y for data in dataset], dim=0).float()
     train_idx = splits["train"]
     target_mean = y_full[train_idx].mean(dim=0)
@@ -118,47 +136,52 @@ def main():
     y_mu = target_mean[target_index]
     y_sd = target_std[target_index]
 
-    # Base model.
     model = build_model(cfg).to(device)
     obj = torch.load(base_checkpoint, map_location=device)
     state = obj["model_state_dict"] if isinstance(obj, dict) and "model_state_dict" in obj else obj
     model.load_state_dict(state, strict=False)
 
-    pred_norm, y_raw = compute_base_preds(
-        model=model,
-        dataset=dataset,
-        indices=idx,
-        device=device,
-        batch_size=args.pred_batch_size,
-        target_index=target_index,
-    )
+    pred_norm, y_raw = compute_base_preds(model, dataset, idx, device, args.pred_batch_size, target_index)
     y_norm = (y_raw - y_mu) / y_sd
 
-    # Feature cache + residual head.
-    cache = torch.load(feature_cache_path, map_location="cpu")
-    X = cache["features"].float()
+    total_corr = torch.zeros_like(pred_norm)
+    member_results = []
 
-    head_ckpt = torch.load(residual_head_path, map_location="cpu")
-    x_mu = head_ckpt["feature_mean"].float()
-    x_sd = head_ckpt["feature_std"].float().clamp_min(1e-8)
-    hidden_dim = int(head_ckpt.get("hidden_dim", manifest.get("hidden_dim", 64)))
+    for w, member in zip(weights, members):
+        name, head_path, cache_path = member
 
-    residual = ResidualMLP(X.shape[1], hidden_dim=hidden_dim)
-    residual.load_state_dict(head_ckpt["model_state_dict"])
-    residual.eval()
+        cache = torch.load(cache_path, map_location="cpu")
+        X = cache["features"].float()
 
-    Xn = (X[idx] - x_mu) / x_sd
+        head_ckpt = torch.load(head_path, map_location="cpu")
+        x_mu = head_ckpt["feature_mean"].float()
+        x_sd = head_ckpt["feature_std"].float().clamp_min(1e-8)
+        hidden_dim = int(head_ckpt.get("hidden_dim", 64))
 
-    with torch.no_grad():
-        corr = residual(Xn)
+        residual = ResidualMLP(X.shape[1], hidden_dim=hidden_dim)
+        residual.load_state_dict(head_ckpt["model_state_dict"])
+        residual.eval()
 
-    corrected_pred_norm = pred_norm + float(args.alpha) * corr
+        Xn = (X[idx] - x_mu) / x_sd
+        with torch.no_grad():
+            corr = residual(Xn)
+
+        total_corr += float(w) * corr
+        member_results.append({
+            "name": name,
+            "weight": float(w),
+            "head": str(head_path.relative_to(ROOT) if head_path.is_relative_to(ROOT) else head_path),
+            "feature_cache": str(cache_path.relative_to(ROOT) if cache_path.is_relative_to(ROOT) else cache_path),
+            "corr_abs_mean_norm": float(corr.abs().mean()),
+        })
+
+    corrected_pred_norm = pred_norm + float(args.alpha) * total_corr
 
     base_mev = mae_mev(pred_norm, y_norm, y_mu, y_sd)
     corrected_mev = mae_mev(corrected_pred_norm, y_norm, y_mu, y_sd)
 
     result = {
-        "artifact_manifest": str(manifest_path),
+        "artifact_manifest": str(manifest_path.relative_to(ROOT) if manifest_path.is_relative_to(ROOT) else manifest_path),
         "split": args.split,
         "target": manifest.get("target", "U0_atom"),
         "target_index": target_index,
@@ -167,10 +190,9 @@ def main():
         "corrected_mae_mev": corrected_mev,
         "delta_mev": corrected_mev - base_mev,
         "alpha": float(args.alpha),
-        "config": str(config_path),
-        "base_checkpoint": str(base_checkpoint),
-        "residual_head": str(residual_head_path),
-        "feature_cache": str(feature_cache_path),
+        "members": member_results,
+        "config": str(config_path.relative_to(ROOT) if config_path.is_relative_to(ROOT) else config_path),
+        "base_checkpoint": str(base_checkpoint.relative_to(ROOT) if base_checkpoint.is_relative_to(ROOT) else base_checkpoint),
         "device": str(device),
         "pred_batch_size": args.pred_batch_size,
     }
@@ -179,7 +201,7 @@ def main():
     print(text)
 
     if args.out:
-        out = Path(args.out)
+        out = resolve_path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(text + "\n")
         print("Wrote:", out)

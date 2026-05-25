@@ -277,6 +277,7 @@ def main():
     ap.add_argument("--feature-cache", required=True)
     ap.add_argument("--data-root", default=str(Path.home() / "data/QM9"))
     ap.add_argument("--seed", type=int, default=43)
+    ap.add_argument("--feature-seed", type=int, default=None)
     ap.add_argument("--minor-k", type=int, default=2)
     ap.add_argument("--samples-per-center", type=int, default=32)
     ap.add_argument("--eps", type=float, default=1e-6)
@@ -291,6 +292,7 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     seed_everything(args.seed)
+    feature_seed = args.seed if args.feature_seed is None else int(args.feature_seed)
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -317,7 +319,7 @@ def main():
             cache_path,
             minor_k=args.minor_k,
             samples_per_center=args.samples_per_center,
-            seed=args.seed,
+            seed=feature_seed,
             eps=args.eps,
         )
 
@@ -436,6 +438,7 @@ def main():
         "target": TARGET_NAME,
         "target_index": TARGET_INDEX,
         "seed": args.seed,
+        "feature_seed": feature_seed,
         "method": "offline stochastic CB positive/negative local volume residual",
         "base_run_dir": str(args.run_dir),
         "config": str(args.config),
