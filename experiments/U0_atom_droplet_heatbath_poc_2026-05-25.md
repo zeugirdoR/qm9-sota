@@ -80,3 +80,44 @@ The local-surface contribution should start around 1–3% of the primary U0 loss
 ## Non-claims
 
 This POC does not show improved validation/test. It only shows that the local heat-bath signal is measurable and that the current model has large local geometry sensitivity.
+
+## Sigma sweep result
+
+The sigma sweep shows a clear mismatch between the toy local harmonic teacher and the trained model local response.
+
+Kept-droplet summary:
+
+```text
+sigma   amput   teacher_mean  teacher_p95  model_mean  model_p95  surferr_mean  surferr_p95  rmsd_p95  stretch_p95
+0.0025  0.250   0.114073      0.171863     24.472815   60.974133  24.456366     60.929279    0.004649  0.009473
+0.0050  0.250   0.454751      0.683472     49.891872   124.092880 49.794849     124.157784   0.009297  0.018948
+0.0100  0.250   1.816487      2.733892     105.212738  260.512238 104.612129    258.609772   0.018594  0.037862
+0.0200  0.829   5.415902      7.915277     219.300735  512.925171 216.309525    507.260742   0.036096  0.049513
+```
+
+Interpretation:
+
+- The toy teacher scales approximately quadratically with sigma, as expected for a harmonic local energy surface.
+- The model response scales approximately linearly with sigma and is orders of magnitude larger than the toy teacher response.
+- Therefore the model has a large local first-order geometry sensitivity around equilibrium.
+- Droplet amputation cleans geometry/teacher outliers, but does not remove the model local-surface mismatch.
+
+Decision:
+
+The first training version should not use a high-weight full local-surface matching loss. Instead, use a tiny symmetric ±delta stationarity regularizer:
+
+```text
+odd_model  = 0.5 * (M(x0 + delta) - M(x0 - delta))
+even_model = 0.5 * (M(x0 + delta) + M(x0 - delta)) - M(x0)
+
+L_stationary = SmoothL1(odd_model, 0)
+L_curvature  = SmoothL1(even_model, teacher_delta)  # optional, after stationarity is stable
+```
+
+Recommended first scout:
+
+- sigma: 0.0025 Å
+- perturb_fraction: 0.10–0.25
+- one ±delta pair per selected graph
+- contribution target: about 1% of primary U0 loss
+- stage: 400→500 only, with atomaux [13,14,15] still gentle
