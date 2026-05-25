@@ -121,3 +121,68 @@ Recommended first scout:
 - one ±delta pair per selected graph
 - contribution target: about 1% of primary U0 loss
 - stage: 400→500 only, with atomaux [13,14,15] still gentle
+
+## Symmetric Droplet Heat-Bath stationarity scout
+
+We launched a standalone scout for local stationarity regularization rather than patching the main runner.
+
+Motivation:
+
+- The sigma sweep showed the toy harmonic teacher response scales quadratically with sigma, while the model response scales roughly linearly and is much larger.
+- Therefore the first training regularizer should penalize the odd response M(x0+delta)-M(x0-delta), not full curvature matching.
+
+Scout configuration:
+
+- base checkpoint: warmstart_best_model_epoch400_NOMOTOR_model_only.pt
+- training window: 400→500
+- primary target: U0_atom
+- atomaux targets: [13,14,15]
+- atomaux lambda_end: 0.0003
+- droplet sigma: 0.0025 Å
+- droplet every steps: 16
+- droplet graph fraction: 0.25
+- droplet keep quantile: 0.75
+- droplet max bond stretch: 0.015 Å
+- droplet contribution target: 1% of primary U0 loss
+
+Loss:
+
+```text
+L = L_U0
+  + lambda_atomaux * L_[13,14,15]
+  + lambda_stationary * SmoothL1(0.5 * (M(x0+delta)-M(x0-delta)), 0)
+```
+
+Run directory:
+
+```text
+results_local/SYS76_SCOUT_ATOMAUX_DROPLET_STATIONARY_SIG0025_FROM400_U0atom_500epoch_seed43
+```
+
+## Standalone no-Droplet control result
+
+The first Droplet stationarity training scout appeared worse than the main-runner atomaux-only baseline, but a standalone no-Droplet control showed that the standalone scout loop itself does not reproduce the main-runner baseline.
+
+Comparison:
+
+```text
+main_runner_atomaux_only_500:
+  best_val_target_converted_mae: 59.90900099277496
+
+custom_control_no_droplet_500:
+  best_val_target_converted_mae: 61.72745302319527
+
+droplet_stationary_500:
+  best_val_target_converted_mae: 61.69881671667099
+```
+
+Interpretation:
+
+- The standalone scout loop is about 1.82 meV worse than the trusted main-runner atomaux baseline even with Droplet disabled.
+- Therefore the Droplet term is not the primary cause of the degraded result.
+- In the standalone loop, Droplet stationarity is slightly better than the no-Droplet custom control, but the difference is tiny.
+- The Droplet idea remains open, but it needs a fair main-runner-compatible implementation before scientific judgment.
+
+Decision:
+
+Park standalone Droplet training. Continue prioritizing the validated atomaux→U0-only→stochastic-CB path. Revisit Droplet only after implementing it inside the trusted main runner or after reproducing the main-runner atomaux baseline in the custom loop.
