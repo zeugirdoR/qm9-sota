@@ -480,3 +480,12 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+    # Local-scout script: all artifacts are written inside main().
+    # Bypass occasional CUDA/PyTorch interpreter cleanup hangs after "Wrote:".
+    import os
+    import sys
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
