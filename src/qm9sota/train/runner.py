@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 import copy
+import math
 import json
 from pathlib import Path
 from typing import Any
@@ -192,6 +193,15 @@ def make_scheduler(optimizer, cfg: dict):
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
 
 
+
+def scheduled_aux_lambda(epoch_float: float, *, warmup: float, ramp: float, end: float) -> float:
+    if epoch_float < warmup:
+        return 0.0
+    if ramp <= 0:
+        return float(end)
+    frac = max(0.0, min(1.0, (epoch_float - warmup) / ramp))
+    return float(end) * 0.5 * (1.0 - math.cos(math.pi * frac))
+
 def train_one_epoch(
     model,
     loader,
@@ -204,6 +214,8 @@ def train_one_epoch(
     grad_clip: float = 5.0,
     jepa_ctx: dict | None = None,
     target_index: int | None = None,
+    aux_targets_cfg: dict | None = None,
+    epoch: int | None = None,
 ):
     from qm9sota.losses.jepa import apply_atom_mask, sample_atom_mask
 
@@ -214,6 +226,7 @@ def train_one_epoch(
     stat_count = 0
 
     steps_per_epoch = len(loader)
+    aux_targets_cfg = aux_targets_cfg or {}
 
     for step_in_epoch, batch in enumerate(tqdm(loader, leave=False)):
         batch = batch.to(device)
@@ -236,6 +249,31 @@ def train_one_epoch(
             else:
                 sup_loss, stats = droplet_loss(pred=pred_norm, target=y_norm, step=global_step)
         stats = dict(stats)
+
+
+        if bool(aux_targets_cfg.get("enabled", False)) and target_index is not None:
+            aux_indices = list(aux_targets_cfg.get("indices", []))
+            aux_indices = [int(i) for i in aux_indices if int(i) != int(target_index)]
+            if aux_indices:
+                aux_idx_t = torch.tensor(aux_indices, dtype=torch.long, device=pred_norm.device)
+                aux_pred = pred_norm.index_select(1, aux_idx_t)
+                aux_y = y_norm.index_select(1, aux_idx_t)
+                aux_loss = F.smooth_l1_loss(aux_pred, aux_y)
+
+                epoch_float = float(epoch or 0) + float(step_in_epoch) / max(float(steps_per_epoch), 1.0)
+                aux_lam = scheduled_aux_lambda(
+                    epoch_float,
+                    warmup=float(aux_targets_cfg.get("warmup_epochs", 0.0)),
+                    ramp=float(aux_targets_cfg.get("ramp_epochs", 1.0)),
+                    end=float(aux_targets_cfg.get("lambda_end", 0.0)),
+                )
+
+                if aux_lam > 0.0:
+                    primary_loss_only = sup_loss
+                    sup_loss = sup_loss + float(aux_lam) * aux_loss
+                    stats["primary_sup_loss"] = primary_loss_only.detach()
+                    stats["aux_energy_loss"] = aux_loss.detach()
+                    stats["aux_energy_lambda"] = torch.tensor(float(aux_lam), device=device)
 
         tau = None
         if jepa_ctx is not None:
@@ -496,6 +534,39 @@ def run_training(
             "best_norm": best_norm,
         })
 
+    _cfg_obj_for_aux = locals().get("cfg", None) or locals().get("config", None) or locals().get("train_config", None)
+    _train_cfg_for_aux = locals().get("train_cfg", None)
+    if _train_cfg_for_aux is None and isinstance(_cfg_obj_for_aux, dict):
+        _train_cfg_for_aux = _cfg_obj_for_aux.get("train", {}) or {}
+    if _train_cfg_for_aux is None:
+        _train_cfg_for_aux = {}
+    aux_targets_cfg = dict(_train_cfg_for_aux.get("aux_targets", {}) or {})
+
+    _aux_train_cfg = None
+
+    # Support several historical runner/config naming conventions.
+    for _name in ("train_cfg", "train_config"):
+        _obj = locals().get(_name, None)
+        if isinstance(_obj, dict):
+            _aux_train_cfg = _obj
+            break
+
+    if _aux_train_cfg is None:
+        for _name in ("cfg", "config"):
+            _obj = locals().get(_name, None)
+            if isinstance(_obj, dict):
+                if isinstance(_obj.get("train", None), dict):
+                    _aux_train_cfg = _obj.get("train", {})
+                else:
+                    _aux_train_cfg = _obj
+                break
+
+    if _aux_train_cfg is None:
+        _aux_train_cfg = {}
+
+    aux_targets_cfg = dict(_aux_train_cfg.get("aux_targets", {}) or {})
+
+
     for epoch in range(start_epoch, epochs + 1):
         jepa_ctx = None
         if jepa_loss_mod is not None:
@@ -518,6 +589,8 @@ def run_training(
             grad_clip=grad_clip,
             target_index=target_index,
             jepa_ctx=jepa_ctx,
+            aux_targets_cfg=aux_targets_cfg,
+            epoch=epoch,
         )
 
         raw_mae, norm_mae = evaluate_both(model, bundle.val_loader, device, target_mean, target_std)
