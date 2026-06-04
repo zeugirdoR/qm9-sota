@@ -637,3 +637,151 @@ Next cloud runs:
   2. Delayed plane-onset D192 run from stabilized motor checkpoint with plane_context_scale=0.25 or 0.10.
   3. Optional V22 small plane-xattn continuation/control runs.
 ```
+
+## V22 motor-curriculum Colab/A100 FULL300 exact result
+
+```text
+V22 motor-curriculum FULL200:
+  best_val_target_converted_mae: 75.5125996390551
+
+V22 motor-curriculum FULL300 Colab/A100:
+  run: SCOUT_V22_MOTORCURR_D192_L7_H16_TARGETONLY_U0atom_300epoch_FULL_lr1e6_fromFULL200_seed43
+  best_epoch: 85
+  best_val_target_norm_mae: 0.007062419317662716
+  best_val_target_converted_mae: 72.95035248426007
+  batch_size: 512
+```
+
+Decision:
+
+```text
+Motor-only continuation improved only modestly.
+Next A100 run is delayed stochastic atom-to-plane onset from the FULL300 motor checkpoint with plane_context_scale=0.25.
+```
+
+## Tiny V22 D80/L4 final readout and compact-model pivot
+
+The D80/L4/H4 xattn tiny model remains the best sub-500k scout, but the regime is too weak for serious production scaling.
+
+```text
+D80/L4/H4 xattn, 335171 params:
+  40epoch: 603.2508914007764
+  100epoch: 403.4862623682933
+  150epoch: 366.8375754143369
+  200epoch: 340.6662745691058
+  250epoch: 328.15457120323543
+  300epoch: 318.57834604264565
+
+D80/L4/H4 no-plane, 301553 params:
+  40epoch: 676.7211170521036
+  100epoch: 496.1929014984428
+  150epoch: 412.7697323944446
+  200epoch: 379.0930410777591
+
+D96/L4/H4 xattn, 474227 params:
+  100epoch: 428.28802483421316
+
+D80/L5/H4 xattn, 405179 params:
+  40epoch: 627.8041121457001
+
+D80/L4/H4 motorcurr StageA m=0.03:
+  80epoch: 723.6585231294868
+
+D128/L5/H8 xattn, 1041891 params:
+  200epoch: 174.96225088804707
+```
+
+Interpretation:
+
+```text
+Sub-500k models are useful for feature screening but are not the serious small-model floor.
+Sampled atom-to-plane attention helps even under tiny capacity, but absolute performance remains weak.
+The minimum serious small model appears closer to ~1M parameters.
+Next: test D112/L5/H8 as a compact bridge between sub-500k and D128/L5/H8.
+```
+
+## D192 motor-only NEXT2 result and delayed-plane conclusion
+
+The D192 full-data motor-only branch now clearly beats delayed plane-xattn scale=0.25.
+
+```text
+D192 delayed plane xattn scale=0.25:
+  best_val_target_converted_mae: 71.82973100504064
+
+D192 motor-only RESUME1:
+  best_val_target_converted_mae: 71.65015008784393
+
+D192 motor-only NEXT2 lr=2e-7:
+  run: SCOUT_V22_MOTORCURR_D192_L7_H16_TARGETONLY_U0atom_MOTORONLY_NEXT2_20epoch_FULL_lr2e7_fromRESUME1_seed43
+  best_epoch: 9
+  best_val_target_converted_mae: 71.45909734829515
+  best_val_target_norm_mae: 0.006918048951774836
+  trainable_params: 3036001
+```
+
+Interpretation:
+
+```text
+Delayed plane-xattn scale=0.25 is not beneficial after matched motor-only continuation.
+The dominant V22 mechanism is the PGA motor-product backbone plus continuation/curriculum.
+Pause long D192 plane runs; prioritize motor schedule, efficiency, and clean motor-only controls.
+```
+
+## D192 motor-only NEXT3 result: D192 continuation is flattening
+
+The D192 full-data motor-only branch was continued one more short block from NEXT2 at lr=1e-7.
+
+```text
+D192 delayed plane xattn scale=0.25:
+  best_val_target_converted_mae: 71.82973100504064
+
+D192 motor-only NEXT2:
+  best_val_target_converted_mae: 71.45909734829515
+
+D192 motor-only NEXT3:
+  run: SCOUT_V22_MOTORCURR_D192_L7_H16_TARGETONLY_U0atom_MOTORONLY_NEXT3_20epoch_FULL_lr1e7_fromNEXT2_seed43
+  best_epoch: 14
+  best_val_target_norm_mae: 0.006911924574524164
+  best_val_target_converted_mae: 71.39583638075875
+  trainable_params: 3036001
+  lr: 1e-7
+```
+
+Interpretation:
+
+```text
+D192 motor-only clearly beats delayed plane scale=0.25.
+The gain from NEXT2 to NEXT3 is only about 0.0633 meV, so this branch is flattening.
+Pause long D192 continuation. Prioritize D128 no-plane GP350 and motor-schedule/kernel improvements.
+```
+
+## D192 motor-only NEXT4 result: D192 continuation has flattened
+
+The D192 full-data motor-only branch was continued from NEXT3 at lr=5e-8.
+
+```text
+D192 delayed plane xattn scale=0.25:
+  best_val_target_converted_mae: 71.82973100504064
+
+D192 motor-only NEXT2:
+  best_val_target_converted_mae: 71.45909734829515
+
+D192 motor-only NEXT3:
+  best_val_target_converted_mae: 71.39583638075875
+
+D192 motor-only NEXT4:
+  run: SCOUT_V22_MOTORCURR_D192_L7_H16_TARGETONLY_U0atom_MOTORONLY_NEXT4_20epoch_FULL_lr5e8_fromNEXT3_seed43
+  best_epoch: 14
+  best_val_target_norm_mae: 0.0069100698456168175
+  best_val_target_converted_mae: 71.37667819693138
+  trainable_params: 3036001
+  lr: 5e-8
+```
+
+Interpretation:
+
+```text
+D192 motor-only clearly beats delayed plane scale=0.25.
+The incremental improvement from NEXT3 to NEXT4 is only about 0.0192 meV, so the D192 continuation is effectively flat.
+Pause long D192 continuation; prioritize D128 no-plane GP350, motor-schedule, AMP, and kernel improvements.
+```
