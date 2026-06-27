@@ -28,10 +28,29 @@ imported from `TOI-droplet/emergence/droplet_core.py`). 3-way label-noise sweep:
   `TOI-droplet/emergence/MAXRL_SCORE_EXPERIMENT.md §5b`** (score droplet: tail index ν≈2, "the χ² budget sits
   too low and over-amputates the genuine bulk"). A recurring cross-domain subtlety with a common fix.
 
-## Next — Phase 2c: heavy-tail-aware budget
+## Phase 2c — heavy-tail (Student-t) budget (`budget: student_t`, R²=D·F_{D,ν}(q), ν-floor 3)
 
-Mirror §5b: fit the residual tail (multivariate Student-t / robust tail index) and set the budget from the
-heavy-tailed predictive instead of the Gaussian χ², so the genuine tail is kept and only true outliers are
-amputated. Expectation: removes the clean-data tax (core ≤ baseline at 0%) while preserving/strengthening
-the noise robustness — a tuning-free, invariant, heavy-tail-correct droplet that should match or beat the
-hand-tuned heuristic. Cheaper interim checks: raise `qlevel`, add a `min_weight` floor, or soften ν.
+| corrupted frac | baseline | heuristic | core χ² (2b) | **core heavy-tail (2c)** |
+|---|---|---|---|---|
+| 0.0 | 0.2797 | 0.2763 | 0.3027 | **0.2905** |
+| 0.1 | 0.2967 | 0.2746 | 0.2981 | **0.2785** |
+| 0.2 | 0.3026 | 0.2818 | 0.2893 | **0.2747** (beats heuristic) |
+| 0.3 | 0.3100 | 0.2819 | 0.2864 | **0.2971** (regressed) |
+
+- The heavy-tail budget **cut the clean-data tax** (0.303→0.291) and made the core **competitive**: beats
+  baseline at every noise>0, and beats the hand-tuned heuristic at 20%.
+- But the tax isn't fully gone (0.291 vs heuristic 0.276 — hard compact support vs the heuristic's soft gate),
+  and **30% regressed** (0.286→0.297): at heavy contamination the wider budget + an outlier-inflated robust
+  covariance lets some corrupted leak past R².
+- **Net:** the rigorous, **tuning-free**, invariant core is now *competitive* with the hand-tuned heuristic
+  (both beat baseline; core wins at moderate noise, heuristic more uniformly flat) — without any ρ/temp/λ
+  tuning. Its edge is principle (derived budget + invariance + shared-with-alignment code), not yet a
+  dominant MAE. Confirms the §5b heavy-tail correction transfers to QM9.
+
+### Remaining calibration (Phase 2d, optional)
+- **Residual clean tax** → soften the cut: a `min_weight` floor or a redescending soft weight (raise ν /
+  sigmoid gate like the heuristic) instead of the hard `[·]_+`.
+- **30% leak** → tighter robust scatter: lower the fixed-point `trim` (e.g. 0.5) and/or shrink the ν-fit
+  `keep` fraction so near-boundary corrupted don't inflate the budget.
+- Then the higher-impact items: the **latent OOD certificate** (calibrated abstain — a contribution the
+  loss-reweighting can't make), a real equivariant backbone (Phase 1), droplet-gated generation (Phase 3).
