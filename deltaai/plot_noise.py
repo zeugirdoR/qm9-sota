@@ -37,7 +37,7 @@ if all(v is not None for v in base + drop):
     plt.plot(FRACS, drop, "o-", color="C0", lw=2, label="droplet (bounded-influence)")
     plt.xlabel("fraction of training targets corrupted (5$\\sigma$)")
     plt.ylabel("clean validation mean normalized MAE")
-    plt.title("Droplet robustness to label noise on QM9 (14B-class GH200 smoke)")
+    plt.title("Droplet robustness to label noise on QM9 (GH200 smoke)")
     plt.legend(); plt.grid(alpha=0.3)
     plt.tight_layout()
     out = ROOT / "noise_robustness.png"
