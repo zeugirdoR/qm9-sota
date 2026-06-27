@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Tuple
@@ -30,7 +31,8 @@ class QM9Bundle:
 
 def load_qm9_bundle(cfg: dict, seed: int) -> QM9Bundle:
     data_cfg = cfg["data"]
-    root = Path(data_cfg.get("root", "/content/data/QM9"))
+    # QM9_ROOT env override lets the same configs run on Colab (/content/...) and DeltaAI (/work/...)
+    root = Path(os.environ.get("QM9_ROOT", data_cfg.get("root", "/content/data/QM9")))
 
     if importlib.util.find_spec("rdkit") is not None:
         print(
