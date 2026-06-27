@@ -19,7 +19,7 @@ from .droplet import _resolve_steps
 
 class DropletCoreLoss(nn.Module):
     def __init__(self, base_loss: str = "smooth_l1", warmup_steps: int = 200, anneal_steps: int = 600,
-                 qlevel: float = 0.999, nu: float = 0.5, lambda_end: float = 1.0):
+                 qlevel: float = 0.999, nu: float = 0.5, lambda_end: float = 1.0, budget: str = "student_t"):
         super().__init__()
         self.base_loss = base_loss
         self.warmup_steps = warmup_steps
@@ -27,6 +27,7 @@ class DropletCoreLoss(nn.Module):
         self.qlevel = qlevel
         self.nu = nu
         self.lambda_end = lambda_end
+        self.budget = budget        # "gaussian" (chi^2) or "student_t" (heavy-tail-aware, sec 5b fix)
 
     def _lambda(self, step: int) -> float:
         if step < self.warmup_steps:
@@ -52,8 +53,8 @@ class DropletCoreLoss(nn.Module):
                                      "active_fraction": torch.tensor(1.0)}
 
         with torch.no_grad():
-            w_np, _, _, _, R2 = toi_fixed_point(residual.detach().cpu().numpy(),
-                                                qlevel=self.qlevel, nu=self.nu)
+            w_np, _, _, _, R2, nu_fit = toi_fixed_point(residual.detach().cpu().numpy(),
+                                                        qlevel=self.qlevel, nu=self.nu, budget=self.budget)
             w = torch.as_tensor(w_np, dtype=pred.dtype, device=pred.device)
 
         eff = (1.0 - lam) + lam * w
@@ -63,6 +64,7 @@ class DropletCoreLoss(nn.Module):
             "active_fraction": (w > 0).float().mean().detach(),
             "droplet_weight_mean": w.mean().detach(),
             "R2_budget": torch.tensor(float(R2)),
+            "nu_fit": torch.tensor(float(nu_fit if nu_fit != float("inf") else 0.0)),
         }
         return loss, stats
 
@@ -81,4 +83,5 @@ def build_droplet_core_loss(loss_cfg: dict, steps_per_epoch: int, device: torch.
         qlevel=float(c.get("qlevel", 0.999)),
         nu=float(c.get("nu", 0.5)),
         lambda_end=float(c.get("lambda_end", 1.0)),
+        budget=str(c.get("budget", "student_t")),
     ).to(device)

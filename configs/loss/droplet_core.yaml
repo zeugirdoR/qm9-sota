@@ -8,6 +8,7 @@ loss:
   warmup_steps: auto_half_epoch
   anneal_steps: auto_three_epochs
 
-  qlevel: 0.999      # derived budget R^2 = chi^2_19(0.999)
+  budget: student_t  # heavy-tail-aware budget R^2 = 19*F_{19,nu}(q) (sec 5b fix); "gaussian" = chi^2_19
+  qlevel: 0.999      # derived budget quantile
   nu: 0.50           # compact-support exponent
   lambda_end: 1.00   # fully engage the droplet weighting
