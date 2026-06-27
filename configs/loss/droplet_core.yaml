@@ -1,0 +1,13 @@
+loss:
+  name: droplet_core
+  base_loss: smooth_l1
+
+  # the RIGOROUS invariant droplet (droplet_core.py): affine-invariant Mahalanobis on the residual
+  # covariance + consistency-corrected fixed point + DERIVED chi^2_19 budget. No rho/temperature tuning;
+  # only a warmup + lambda blend so we don't amputate before the residuals concentrate.
+  warmup_steps: auto_half_epoch
+  anneal_steps: auto_three_epochs
+
+  qlevel: 0.999      # derived budget R^2 = chi^2_19(0.999)
+  nu: 0.50           # compact-support exponent
+  lambda_end: 1.00   # fully engage the droplet weighting

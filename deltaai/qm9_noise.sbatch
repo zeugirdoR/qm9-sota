@@ -35,6 +35,9 @@ for FRAC in 0.0 0.1 0.2 0.3; do
   QM9_NOISE_FRAC=$FRAC python scripts/train.py \
     --config configs/train/smoke_noise.yaml --loss configs/loss/droplet_robust.yaml \
     --run-name "noise${FRAC}_droplet"
+  QM9_NOISE_FRAC=$FRAC python scripts/train.py \
+    --config configs/train/smoke_noise.yaml --loss configs/loss/droplet_core.yaml \
+    --run-name "noise${FRAC}_core"
 done
 
 echo "================ collating ================"

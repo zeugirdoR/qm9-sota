@@ -162,11 +162,20 @@ def run_training(
                 steps_per_epoch=len(bundle.train_loader),
                 device=device,
             )
+        elif sup_name == "droplet_core":
+            from qm9sota.losses.droplet_core_loss import build_droplet_core_loss
+            droplet_loss = build_droplet_core_loss(
+                {"loss": sup_block},
+                steps_per_epoch=len(bundle.train_loader),
+                device=device,
+            )
         elif sup_name != "baseline":
             raise ValueError(f"Unknown supervised loss name: {sup_name}")
 
     if loss_name == "droplet":
         _build_supervised({**loss_block, "name": "droplet"})
+    elif loss_name == "droplet_core":
+        _build_supervised({**loss_block, "name": "droplet_core"})
     elif loss_name == "baseline":
         pass
     elif loss_name == "jepa_aux":

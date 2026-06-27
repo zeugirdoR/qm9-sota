@@ -22,19 +22,28 @@ def best(run: str):
 
 base = [best(f"noise{f}_baseline") for f in FRACS]
 drop = [best(f"noise{f}_droplet") for f in FRACS]
+core = [best(f"noise{f}_core") for f in FRACS]
+have_core = all(v is not None for v in core)
 
-print("=" * 60)
+print("=" * 72)
 print("Label-noise robustness (clean-val mean normalized MAE; lower=better)")
-print("=" * 60)
-print(f"{'noise_frac':>10}  {'baseline':>10}  {'droplet':>10}  {'droplet_advantage':>18}")
-for f, b, d in zip(FRACS, base, drop):
-    adv = (b - d) if (b is not None and d is not None) else None
-    print(f"{f:>10}  {str(round(b,4) if b else b):>10}  {str(round(d,4) if d else d):>10}  {str(round(adv,4) if adv is not None else adv):>18}")
+print("=" * 72)
+hdr = f"{'noise_frac':>10}  {'baseline':>10}  {'droplet':>10}"
+if have_core:
+    hdr += f"  {'core':>10}"
+print(hdr)
+for i, f in enumerate(FRACS):
+    row = f"{f:>10}  {str(round(base[i],4) if base[i] else base[i]):>10}  {str(round(drop[i],4) if drop[i] else drop[i]):>10}"
+    if have_core:
+        row += f"  {str(round(core[i],4)):>10}"
+    print(row)
 
 if all(v is not None for v in base + drop):
-    plt.figure(figsize=(6.2, 4.6))
+    plt.figure(figsize=(6.4, 4.7))
     plt.plot(FRACS, base, "o-", color="C3", lw=2, label="baseline (smooth-L1)")
-    plt.plot(FRACS, drop, "o-", color="C0", lw=2, label="droplet (bounded-influence)")
+    plt.plot(FRACS, drop, "o-", color="C1", lw=2, label="droplet — heuristic (tuned budget)")
+    if have_core:
+        plt.plot(FRACS, core, "o-", color="C0", lw=2, label="droplet — invariant core (derived $\\chi^2$)")
     plt.xlabel("fraction of training targets corrupted (5$\\sigma$)")
     plt.ylabel("clean validation mean normalized MAE")
     plt.title("Droplet robustness to label noise on QM9 (GH200 smoke)")
