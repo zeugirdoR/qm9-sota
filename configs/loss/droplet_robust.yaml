@@ -1,0 +1,28 @@
+loss:
+  name: droplet
+  base_loss: smooth_l1
+
+  # fully-engaged schedule (unlike droplet_gentle): lambda_end=1.0 + rho_end=1.0 so the compact-support
+  # weight actually amputates corrupted/outlier molecules in the label-noise regime.
+  warmup_steps: auto_half_epoch
+  anneal_steps: auto_three_epochs
+
+  delta_start: 0.05
+  delta_end: 0.50
+
+  nu_start: 0.10
+  nu_end: 1.00
+
+  alpha_start: 0.10
+  alpha_end: 1.00
+
+  temp_start: 1.0
+  temp_end: 25.0
+
+  lambda_start: 0.0
+  lambda_end: 1.00
+
+  soft_gate: true
+  min_weight: 0.0
+  normalize_by_weight: true
+  learnable_offsets: false
