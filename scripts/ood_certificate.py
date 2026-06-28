@@ -39,12 +39,16 @@ QLEVEL = float(os.environ.get("OOD_QLEVEL", "0.999"))
 BUDGET = os.environ.get("OOD_BUDGET", "student_t")
 JITTER = float(os.environ.get("OOD_JITTER", "1.0"))
 
+_MODEL = os.environ.get("OOD_MODEL", "painn")     # PaiNN by default — the toy backbone was the bottleneck
+_model_cfg = {"name": _MODEL, "hidden_dim": 128, "num_layers": 3, "out_dim": 19}
+if _MODEL == "painn":
+    _model_cfg.update({"num_rbf": 20, "cutoff": 5.0})
 cfg = {
     "data": {"train_size": 110000, "val_size": 10000,
              "smoke": bool(int(os.environ.get("OOD_SMOKE", "0"))),
              "smoke_train_size": 20000, "smoke_val_size": 2000,
              "batch_size": 128, "num_workers": 0},
-    "model": {"name": "tiny_radial_mpnn", "hidden_dim": 128, "num_layers": 3, "out_dim": 19},
+    "model": _model_cfg,
 }
 
 torch.manual_seed(0)

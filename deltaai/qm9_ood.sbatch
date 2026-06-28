@@ -21,7 +21,8 @@ module load python/miniforge3_pytorch/2.10.0
 source "$WORK/qm9-venv/bin/activate"
 cd "$WORK/qm9/qm9-sota"
 export QM9_ROOT="$WORK/qm9-data/QM9"
-export OOD_EPOCHS="${OOD_EPOCHS:-10}"
+export OOD_MODEL="${OOD_MODEL:-painn}"
+export OOD_EPOCHS="${OOD_EPOCHS:-20}"
 export OOD_BUDGET="${OOD_BUDGET:-student_t}"
 
 echo "host: $(hostname)  start: $(date)"
