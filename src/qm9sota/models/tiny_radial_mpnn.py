@@ -96,6 +96,15 @@ class TinyRadialMPNN(nn.Module):
 def build_model(cfg: dict) -> nn.Module:
     model_cfg = cfg["model"]
     name = model_cfg.get("name", "tiny_radial_mpnn")
+    if name == "painn":
+        from qm9sota.models.painn import PaiNN
+        return PaiNN(
+            F_dim=int(model_cfg.get("hidden_dim", 128)),
+            num_layers=int(model_cfg.get("num_layers", 3)),
+            num_rbf=int(model_cfg.get("num_rbf", 20)),
+            cutoff=float(model_cfg.get("cutoff", 5.0)),
+            out_dim=int(model_cfg.get("out_dim", 19)),
+        )
     if name != "tiny_radial_mpnn":
         raise ValueError(f"Unknown model: {name}")
     return TinyRadialMPNN(
